@@ -1,0 +1,54 @@
+services:
+  # PostgreSQL Database Service
+  db:
+    image: postgres:15-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+      POSTGRES_DB: ${DB_NAME:-webhook_forwarder_db}
+    volumes:
+      - ./docker_data/db:/var/lib/postgresql/data
+    ports:
+      # Expose the database port only if you need external access (e.g., for debugging)
+      # - "5432:5432"
+      - "5432" # Expose to host network, but not mapped to a specific port unless uncommented
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - shared-net
+
+  # Webhook Forwarder API Service
+  api:
+    container_name: webhook-redirector
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: always
+    ports:
+      - "3005:3005" # Map the API port to the host
+    environment:
+      # Application Environment Variables
+      PORT: 3005
+      VERIFY_TOKEN: ${VERIFY_TOKEN} # IMPORTANT: Change this!
+      # Database Connection Variables (must match the 'db' service)
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${DB_NAME}
+      ADMIN_USERNAME: ${ADMIN_USERNAME}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+    depends_on:
+      db:
+        condition: service_healthy # Wait for the database to be ready
+    networks:
+      - shared-net
+
+networks:
+  shared-net:
+    name: shared-net
+    driver: bridge

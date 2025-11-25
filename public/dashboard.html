@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Meta Webhook Forwarder Configuration</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background-color: #f4f4f9; }
+        .container { max-width: 900px; margin: auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        h1, h2 { color: #333; }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; }
+        input[type="text"], input[type="url"] { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+        button { background-color: #007bff; color: white; padding: 10px 15px; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; }
+        button:hover { background-color: #0056b3; }
+        .webhook-list { margin-top: 20px; }
+        .webhook-item { padding: 10px; border: 1px solid #eee; margin-bottom: 10px; border-radius: 4px; display: flex; justify-content: space-between; align-items: center; }
+        .webhook-item.inactive { background-color: #ffebeb; border-left: 5px solid #dc3545; }
+        .webhook-item.active { border-left: 5px solid #28a745; }
+        .webhook-details { flex-grow: 1; }
+        .webhook-details p { margin: 5px 0; }
+        .webhook-actions button { margin-left: 10px; padding: 5px 10px; font-size: 14px; }
+        .status-log { margin-top: 30px; border-top: 1px solid #ccc; padding-top: 20px; }
+        .log-item { background-color: #f9f9f9; padding: 10px; margin-bottom: 10px; border-radius: 4px; white-space: pre-wrap; word-break: break-all; }
+        .token-field { font-family: monospace; font-size: 12px; }
+        .info-box { background-color: #e7f3ff; border-left: 4px solid #2196F3; padding: 12px; margin-bottom: 20px; }
+        .info-box code { background-color: #fff; padding: 2px 6px; border-radius: 3px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Meta Webhook Forwarder</h1>
+        <p>Use this interface to configure the endpoints where Meta's WhatsApp webhooks will be forwarded.</p>
+
+        <div class="info-box">
+            <strong>How tokens work:</strong>
+            <ul>
+                <li><strong>Meta verify token</strong> comes from <code>VERIFY_TOKEN</code> in your <code>.env</code> and is used only on <code>GET /webhook</code>.</li>
+                <li><strong>Verification Token (below)</strong> is per target (Evolution, Chatwoot, etc). It is forwarded to them (e.g. in header <code>X-Webhook-Token</code>) so they can validate the request.</li>
+                <li>This lets you have different tokens for Evolution and Chatwoot even though Meta itself uses only one verification token.</li>
+            </ul>
+        </div>
+
+        <h2>Add New Webhook</h2>
+        <form id="addWebhookForm">
+            <div class="form-group">
+                <label for="webhookName">Name (e.g., Evolution, Chatwoot)</label>
+                <input type="text" id="webhookName" required>
+            </div>
+            <div class="form-group">
+                <label for="webhookUrl">Target URL</label>
+                <input type="url" id="webhookUrl" required placeholder="https://your-service.com/webhook">
+            </div>
+            <div class="form-group">
+                <label for="webhookToken">Verification Token (optional, for Evolution/Chatwoot)</label>
+                <input type="text" id="webhookToken" class="token-field" placeholder="e.g. evolution_token_123">
+                <small>This token will be stored with this webhook and forwarded in a header like <code>X-Webhook-Token</code> to your target.</small>
+            </div>
+            <button type="submit">Add Webhook</button>
+        </form>
+
+        <h2>Configured Webhooks</h2>
+        <div id="webhookList" class="webhook-list">
+            <p>Loading webhooks...</p>
+        </div>
+
+        <h2>Job Queue Status</h2>
+        <div id="jobStatus" class="webhook-list">
+            <p>Loading job status...</p>
+        </div>
+
+        <h2 class="status-log">Recent Received Webhooks (Last 20)</h2>
+        <div id="receivedLog" class="status-log">
+            <p>Loading log...</p>
+        </div>
+    </div>
+
+    <script>
+        async function logout() {
+            await fetch('/auth/logout', { method: 'POST' });
+            window.location.href = '/login.html';
+        }
+        
+        // Update your init function to handle 401 (Unauthorized) errors
+        // If fetchWebhooks returns 401, redirect to login
+        const originalFetch = window.fetch;
+        window.fetch = async function(...args) {
+            const response = await originalFetch(...args);
+            if (response.status === 401) {
+                window.location.href = '/login.html';
+            }
+            return response;
+        };
+
+        const API_BASE = '/api';
+
+        // --- Webhook Configuration Functions ---
+
+        async function fetchWebhooks() {
+            const response = await fetch(`${API_BASE}/webhooks`);
+            return response.json();
+        }
+
+        async function renderWebhooks() {
+            const listElement = document.getElementById('webhookList');
+            listElement.innerHTML = '';
+            try {
+                const webhooks = await fetchWebhooks();
+                if (webhooks.length === 0) {
+                    listElement.innerHTML = '<p>No webhooks configured yet.</p>';
+                    return;
+                }
+
+                webhooks.forEach(webhook => {
+                    const item = document.createElement('div');
+                    item.className = `webhook-item ${webhook.is_active ? 'active' : 'inactive'}`;
+                    const tokenDisplay = webhook.verification_token
+                        ? `<p><small><strong>Token:</strong> <code>${webhook.verification_token}</code></small></p>`
+                        : '';
+                    item.innerHTML = `
+                        <div class="webhook-details">
+                            <p><strong>${webhook.name}</strong> (${webhook.is_active ? 'Active' : 'Inactive'})</p>
+                            <p><strong>URL:</strong> <code>${webhook.url}</code></p>
+                            ${tokenDisplay}
+                        </div>
+                        <div class="webhook-actions">
+                            <button onclick="toggleWebhookStatus(${webhook.id}, ${!webhook.is_active})">
+                                ${webhook.is_active ? 'Deactivate' : 'Activate'}
+                            </button>
+                            <button onclick="deleteWebhook(${webhook.id})">Delete</button>
+                        </div>
+                    `;
+                    listElement.appendChild(item);
+                });
+            } catch (error) {
+                listElement.innerHTML = '<p style="color: red;">Error loading webhooks.</p>';
+                console.error('Error rendering webhooks:', error);
+            }
+        }
+
+        document.getElementById('addWebhookForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const name = document.getElementById('webhookName').value;
+            const url = document.getElementById('webhookUrl').value;
+            const verification_token = document.getElementById('webhookToken').value || null;
+
+            try {
+                const response = await fetch(`${API_BASE}/webhooks`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name, url, verification_token })
+                });
+
+                if (response.ok) {
+                    document.getElementById('webhookName').value = '';
+                    document.getElementById('webhookUrl').value = '';
+                    document.getElementById('webhookToken').value = '';
+                    await renderWebhooks();
+                } else {
+                    const data = await response.json().catch(() => ({}));
+                    alert('Failed to add webhook: ' + (data.error || response.statusText));
+                }
+            } catch (error) {
+                alert('An error occurred while adding the webhook.');
+                console.error('Error adding webhook:', error);
+            }
+        });
+
+        async function toggleWebhookStatus(id, newStatus) {
+            try {
+                const webhooks = await fetchWebhooks();
+                const webhook = webhooks.find(w => w.id === id);
+                if (!webhook) return;
+
+                const response = await fetch(`${API_BASE}/webhooks/${id}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name: webhook.name,
+                        url: webhook.url,
+                        is_active: newStatus,
+                        verification_token: webhook.verification_token
+                    })
+                });
+
+                if (response.ok) {
+                    await renderWebhooks();
+                } else {
+                    const data = await response.json().catch(() => ({}));
+                    alert('Failed to update webhook status: ' + (data.error || response.statusText));
+                }
+            } catch (error) {
+                alert('An error occurred while updating the webhook.');
+                console.error('Error updating webhook:', error);
+            }
+        }
+
+        async function deleteWebhook(id) {
+            if (!confirm('Are you sure you want to delete this webhook?')) return;
+
+            try {
+                const response = await fetch(`${API_BASE}/webhooks/${id}`, {
+                    method: 'DELETE'
+                });
+
+                if (response.status === 204) {
+                    await renderWebhooks();
+                } else {
+                    const data = await response.json().catch(() => ({}));
+                    alert('Failed to delete webhook: ' + (data.error || response.statusText));
+                }
+            } catch (error) {
+                alert('An error occurred while deleting the webhook.');
+                console.error('Error deleting webhook:', error);
+            }
+        }
+
+        // --- Received Webhook Log Functions ---
+
+        async function fetchReceivedLog() {
+            const response = await fetch(`${API_BASE}/received`);
+            return response.json();
+        }
+
+        async function renderReceivedLog() {
+            const logElement = document.getElementById('receivedLog');
+            logElement.innerHTML = '';
+            try {
+                const log = await fetchReceivedLog();
+                if (log.length === 0) {
+                    logElement.innerHTML = '<p>No webhooks received yet.</p>';
+                    return;
+                }
+
+                log.forEach(item => {
+                    const logItem = document.createElement('div');
+                    logItem.className = 'log-item';
+                    logItem.innerHTML = `
+                        <p><strong>Received At:</strong> ${new Date(item.received_at).toLocaleString()}</p>
+                        <details>
+                            <summary>View Full Payload</summary>
+                            <pre>${JSON.stringify(item.payload, null, 2)}</pre>
+                        </details>
+                    `;
+                    logElement.appendChild(logItem);
+                });
+            } catch (error) {
+                logElement.innerHTML = '<p style="color: red;">Error loading received log.</p>';
+                console.error('Error rendering received log:', error);
+            }
+        }
+
+        // --- Job Status Functions ---
+
+        async function fetchJobStatus() {
+            const response = await fetch(`${API_BASE}/jobs/status`);
+            return response.json();
+        }
+
+        async function renderJobStatus() {
+            const statusElement = document.getElementById('jobStatus');
+            statusElement.innerHTML = '';
+            try {
+                const status = await fetchJobStatus();
+                if (status.length === 0) {
+                    statusElement.innerHTML = '<p>No jobs in the queue yet.</p>';
+                    return;
+                }
+
+                const ul = document.createElement('ul');
+                status.forEach(item => {
+                    const li = document.createElement('li');
+                    li.textContent = `${item.status.toUpperCase()}: ${item.count}`;
+                    ul.appendChild(li);
+                });
+                statusElement.appendChild(ul);
+            } catch (error) {
+                statusElement.innerHTML = '<p style="color: red;">Error loading job status.</p>';
+                console.error('Error rendering job status:', error);
+            }
+        }
+
+        // --- Initialization ---
+
+        function init() {
+            renderWebhooks();
+            renderJobStatus();
+            renderReceivedLog();
+            setInterval(() => {
+                renderJobStatus();
+                renderReceivedLog();
+            }, 10000);
+        }
+
+        window.onload = init;
+    </script>
+</body>
+</html>

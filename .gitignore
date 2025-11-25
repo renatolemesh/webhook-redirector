@@ -1,0 +1,22 @@
+# Dependencies
+/node_modules
+/dist
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Database
+*.sqlite
+*.sqlite-journal
+/data
+
+# Docker
+docker_data

@@ -33,7 +33,9 @@ services:
     environment:
       # Application Environment Variables
       PORT: 3005
-      VERIFY_TOKEN: ${VERIFY_TOKEN} # IMPORTANT: Change this!
+      VERIFY_TOKEN: ${VERIFY_TOKEN} 
+      CHATWOOT_BASE_URL: ${CHATWOOT_BASE_URL}
+      CHATWOOT_API_TOKEN: ${CHATWOOT_API_TOKEN}
       # Database Connection Variables (must match the 'db' service)
       DB_HOST: db
       DB_PORT: 5432
@@ -47,6 +49,22 @@ services:
         condition: service_healthy # Wait for the database to be ready
     networks:
       - shared-net
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    restart: always
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@admin.com}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    ports:
+      - "5050:80"
+    volumes:
+      - ./docker_data/pgadmin:/var/lib/pgadmin
+    networks:
+      - shared-net
+    depends_on:
+      - db
 
 networks:
   shared-net:

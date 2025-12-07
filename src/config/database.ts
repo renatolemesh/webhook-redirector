@@ -46,7 +46,27 @@ export const initDb = async () => {
         error_message TEXT
       );
 
-      -- In case column was missing on existing DB
+      CREATE TABLE IF NOT EXISTS chatwoot_messages (
+        id SERIAL PRIMARY KEY,
+        phone_number VARCHAR(20) NOT NULL,
+        contact_name VARCHAR(255),
+        content TEXT NOT NULL,
+        message_type VARCHAR(20) NOT NULL DEFAULT 'outgoing',
+        status VARCHAR(50) NOT NULL DEFAULT 'pending',
+        attempt_count INTEGER NOT NULL DEFAULT 0,
+        next_attempt_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        last_attempt_at TIMESTAMP WITH TIME ZONE,
+        error_message TEXT,
+        content_type VARCHAR(100),
+        template_params TEXT,
+        processed_params TEXT,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_chatwoot_messages_status 
+        ON chatwoot_messages(status, next_attempt_at);
+
+      -- Add missing columns to configured_webhooks if they don't exist
       DO $$
       BEGIN
         IF NOT EXISTS (
@@ -55,6 +75,34 @@ export const initDb = async () => {
             AND column_name = 'verification_token'
         ) THEN
           ALTER TABLE configured_webhooks ADD COLUMN verification_token VARCHAR(255);
+        END IF;
+      END $$;
+
+      -- Add new columns to chatwoot_messages if they don't exist
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_name = 'chatwoot_messages'
+            AND column_name = 'content_type'
+        ) THEN
+          ALTER TABLE chatwoot_messages ADD COLUMN content_type VARCHAR(100);
+        END IF;
+
+        IF NOT EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_name = 'chatwoot_messages'
+            AND column_name = 'template_params'
+        ) THEN
+          ALTER TABLE chatwoot_messages ADD COLUMN template_params TEXT;
+        END IF;
+
+        IF NOT EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_name = 'chatwoot_messages'
+            AND column_name = 'processed_params'
+        ) THEN
+          ALTER TABLE chatwoot_messages ADD COLUMN processed_params TEXT;
         END IF;
       END $$;
     `);

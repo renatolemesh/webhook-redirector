@@ -1,12 +1,15 @@
-import express, { Request, Response, NextFunction } from 'express';
+import express, { Request, Response } from 'express';
 import session from 'express-session';
 import connectPgSimple from 'connect-pg-simple';
 import path from 'path';
 import * as dotenv from 'dotenv';
-import webhookConfigRouter from './webhookConfigRouter';
-import pool, { initDb } from './db';
-import { forwardWebhook } from './forwarderService';
-import { startWorker } from './jobWorker';
+import webhookConfigRouter from './routes/webhookConfigRouter';
+import chatwootMessageRouter from './routes/chatwootMessageRouter';
+import pool, { initDb } from './config/database';
+import { forwardWebhook } from './services/forwarderService';
+import { startWorker } from './services/jobWorker';
+import { startChatwootWorker } from './services/chatwootWorker';
+import { requireLogin } from './middleware/auth';
 
 dotenv.config();
 
@@ -21,35 +24,18 @@ app.use(express.json());
 app.use(session({
   store: new PgSession({
     pool: pool,
-    tableName: 'session' // It will create this table automatically
+    tableName: 'session'
   }),
   secret: process.env.SESSION_SECRET || 'change_this_secret_in_env',
   resave: false,
   saveUninitialized: false,
-  cookie: { maxAge: 30 * 24 * 60 * 60 * 1000 } // 30 days
+  cookie: { maxAge: 30 * 24 * 60 * 60 * 1000 }
 }));
 
-// 3. Serve Login Page and Static Assets (CSS/JS) publicly
-// We serve 'public' but we will handle '/' manually below
+// 3. Serve static assets
 app.use(express.static('public', { index: false }));
 
-// --- AUTHENTICATION MIDDLEWARE ---
-const requireLogin = (req: Request, res: Response, next: NextFunction) => {
-  // @ts-ignore - express-session adds 'user' to session
-  if (req.session && req.session.user) {
-    next();
-  } else {
-    // If it's an API call, return 401
-    if (req.path.startsWith('/api')) {
-      res.status(401).json({ error: 'Unauthorized' });
-    } else {
-      // If it's a browser request, redirect to login
-      res.redirect('/login.html');
-    }
-  }
-};
-
-// --- AUTH ROUTES ---
+// --- AUTH ROUTES (Public) ---
 app.post('/auth/login', (req: Request, res: Response) => {
   const { username, password } = req.body;
   
@@ -69,7 +55,6 @@ app.post('/auth/logout', (req: Request, res: Response) => {
 });
 
 // --- PUBLIC ROUTES (Meta Webhook) ---
-// This MUST remain public so Meta can reach it
 app.get('/webhook', (req: Request, res: Response) => {
   const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
   const mode = req.query['hub.mode'];
@@ -89,7 +74,6 @@ app.get('/webhook', (req: Request, res: Response) => {
 
 app.post('/webhook', async (req: Request, res: Response) => {
   const body = req.body;
-  // Acknowledge immediately
   res.status(200).send('EVENT_RECEIVED');
   try {
     await forwardWebhook(body);
@@ -100,13 +84,15 @@ app.post('/webhook', async (req: Request, res: Response) => {
 
 // --- PROTECTED ROUTES ---
 
-// 1. The Dashboard UI
+// Dashboard (requires session login)
 app.get('/', requireLogin, (req: Request, res: Response) => {
-    res.sendFile(path.join(__dirname, '../public/dashboard.html'));
+  res.sendFile(path.join(__dirname, '../public/dashboard.html'));
 });
 
-// 2. The Configuration API
-// Note: Remove basicAuthMiddleware from webhookConfigRouter or index.ts if you used it there
+// Chatwoot message API (token auth is handled inside the router)
+app.use('/api/chatwoot', chatwootMessageRouter);
+
+// Webhook configuration API (requires session login - for dashboard)
 app.use('/api', requireLogin, webhookConfigRouter);
 
 
@@ -114,7 +100,14 @@ app.use('/api', requireLogin, webhookConfigRouter);
 const startServer = async () => {
   try {
     await initDb();
-    // Create session table if it doesn't exist
+    
+    // Validate required environment variables
+    if (!process.env.VERIFY_TOKEN) {
+      console.warn('⚠️  WARNING: VERIFY_TOKEN not set! API endpoints will not work properly.');
+      console.warn('   Add VERIFY_TOKEN=your_secret_token to your .env file');
+    }
+    
+    // Create session table
     await pool.query(`
       CREATE TABLE IF NOT EXISTS "session" (
         "sid" varchar NOT NULL COLLATE "default",
@@ -128,9 +121,20 @@ const startServer = async () => {
       CREATE INDEX IF NOT EXISTS "IDX_session_expire" ON "session" ("expire");
     `).catch(() => console.log('Session table likely exists'));
 
+    // Start both workers
     startWorker();
+    startChatwootWorker();
+    
     app.listen(PORT, '0.0.0.0', () => {
-      console.log(`Server is running on port ${PORT}`);
+      console.log(`✓ Server is running on port ${PORT}`);
+      console.log(`✓ Webhook endpoint: http://localhost:${PORT}/webhook`);
+      console.log(`✓ Chatwoot API: http://localhost:${PORT}/api/chatwoot/send`);
+      console.log(`✓ Dashboard: http://localhost:${PORT}/`);
+      console.log('');
+      console.log('API Authentication:');
+      console.log('  - Dashboard: Session-based (login required)');
+      console.log('  - Chatwoot POST API: Token-based (X-API-Token header with VERIFY_TOKEN)');
+      console.log('  - Chatwoot GET API: Session or Token');
     });
   } catch (error) {
     console.error('Failed to start server:', error);

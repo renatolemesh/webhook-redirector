@@ -1,5 +1,5 @@
-import { getActiveConfiguredWebhooks, saveReceivedWebhook } from './webhookModel';
-import { createJob } from './jobQueueModel';
+import { getActiveConfiguredWebhooks, saveReceivedWebhook } from '../models/webhookModel';
+import { createJob } from '../models/jobQueueModel';
 import axios from 'axios';
 
 /**

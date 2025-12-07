@@ -1,6 +1,6 @@
 import axios from 'axios';
-import { getDueJobs, updateJobStatus, WebhookJob } from './jobQueueModel';
-import { getAllConfiguredWebhooks, ConfiguredWebhook } from './webhookModel';
+import { getDueJobs, updateJobStatus, WebhookJob } from '../models/jobQueueModel';
+import { getAllConfiguredWebhooks, ConfiguredWebhook } from '../models/webhookModel';
 
 const RETRY_SCHEDULE_MS = [0, 0, 0, 0, 10 * 60 * 1000, 30 * 60 * 1000, 60 * 60 * 1000, 6 * 60 * 60 * 1000];
 const MAX_ATTEMPTS = RETRY_SCHEDULE_MS.length;

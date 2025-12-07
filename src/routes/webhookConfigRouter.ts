@@ -5,9 +5,9 @@ import {
   updateConfiguredWebhook,
   deleteConfiguredWebhook,
   getRecentReceivedWebhooks,
-} from './webhookModel';
-import { getJobCounts } from './jobQueueModel';
-import { forwardGetRequest } from './forwarderService';
+} from '../models/webhookModel';
+import { getJobCounts } from '../models/jobQueueModel';
+import { forwardGetRequest } from '../services/forwarderService';
 
 const router = Router();
 
@@ -121,5 +121,7 @@ router.get('/webhook/', async (req: Request, res: Response) => {
     }
   }
 });
+
+
 
 export default router;

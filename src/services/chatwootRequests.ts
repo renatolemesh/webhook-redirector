@@ -5,8 +5,8 @@ dotenv.config();
 import logger from '../utils/logger';
 
 const CHATWOOT_BASE_URL = process.env.CHATWOOT_BASE_URL;
-const ACCOUNT_ID = 1;
-const INBOX_ID = 1;
+const ACCOUNT_ID = process.env.CHATWOOT_ACCOUNT_ID || 1;
+const INBOX_ID = process.env.CHATWOOT_INBOX_ID || 2;
 const API_ACCESS_TOKEN = process.env.CHATWOOT_API_TOKEN;
 
 interface Contact {
@@ -76,19 +76,25 @@ class ChatwootRequest {
    */
   private async createContact(
     phoneNumber: string,
-    name: string = 'Desconhecido'
+    name?: string | null
   ): Promise<Contact> {
     try {
+      const body: any = {
+        identifier: '+' + phoneNumber,
+        phone_number: '+' + phoneNumber,
+        custom_attributes: {
+          source: 'external-whatsapp-system',
+        },
+      };
+
+      // Only add name if it is NOT null, undefined, or empty
+      if (name) {
+        body.name = name;
+      }
+
       const response = await this.client.post(
         `/api/v1/accounts/${ACCOUNT_ID}/contacts`,
-        {
-          name,
-          identifier: phoneNumber,
-          phone_number: phoneNumber,
-          custom_attributes: {
-            source: 'external-whatsapp-system',
-          },
-        }
+        body
       );
 
       return response.data.payload.contact;
@@ -106,7 +112,10 @@ class ChatwootRequest {
     name?: string
   ): Promise<Contact> {
     // Remove the "+" if present
-    const cleanNumber = phoneNumber.replace(/^\+/, '');
+    let cleanNumber = phoneNumber.replace(/^\+/, '');
+    if (cleanNumber.length < 12 ) {
+      cleanNumber = '55' + cleanNumber;
+    }
     
     // First, try to find existing contact with the cleaned number
     let contact = await this.searchContact(cleanNumber);
@@ -154,29 +163,18 @@ class ChatwootRequest {
   private async getContactConversations(contactId: number): Promise<any[]> {
     try {
       const response = await this.client.get(
-        `/api/v1/accounts/${ACCOUNT_ID}/conversations`,
-        {
-          params: {
-            inbox_id: INBOX_ID,
-            status: 'open', // Filter for open conversations
-          },
-        }
+        `/api/v1/accounts/${ACCOUNT_ID}/contacts/${contactId}/conversations`
       );
 
-      // Based on the actual Chatwoot API response structure
-      const conversations = response.data.data.payload as any[];
-      
-      // Filter conversations by meta.sender.id (not contact_id)
-      const contactConversations = conversations.filter(
-        (conv: any) => conv.meta?.sender?.id === contactId
-      );
-
-      return contactConversations;
+      return response.data.payload || [];
     } catch (error: any) {
-      console.error('Error fetching conversations:', error.response?.data || error.message);
+      console.error(
+        'Error fetching contact conversations:',
+        error.response?.data || error.message
+      );
       return [];
     }
-  }
+}
 
   /**
    * Create a new conversation for the contact
@@ -209,30 +207,33 @@ class ChatwootRequest {
    * Get or create a conversation for the contact
    * First checks for existing open conversations, if none exist, creates a new one
    */
-  private async getOrCreateConversation(contactId: number): Promise<{ id: number }> {
+  private async getOrCreateConversation(
+    contactId: number
+  ): Promise<{ id: number }> {
     try {
-      // Step 1: Try to get existing open conversations
-      const existingConversations = await this.getContactConversations(contactId);
+      const conversations = await this.getContactConversations(contactId);
 
-      if (existingConversations.length > 0) {
-        // Sort by last_activity_at descending and pick the most recent
-        const sortedConversations = existingConversations.sort(
-          (a, b) => (b.last_activity_at || 0) - (a.last_activity_at || 0)
+      const activeConversation = conversations.find(
+        (conv: any) => conv.status === 'open' || conv.status === 'pending'
+      );
+
+      if (activeConversation) {
+        console.log(
+          `Using existing conversation with ID: ${activeConversation.id}`
         );
-        
-        const latestConversation = sortedConversations[0];
-        console.log(`Using existing conversation with ID: ${latestConversation.id}`);
-        return { id: latestConversation.id };
+        return { id: activeConversation.id };
       }
 
-      // Step 2: If no open conversation exists, create a new one
-      console.log('No open conversation found, creating new one...');
+      console.log('No active conversation found, creating new one...');
       return await this.createConversation(contactId);
     } catch (error: any) {
-      console.error('Error in getOrCreateConversation:', error.response?.data || error.message);
+      console.error(
+        'Error in getOrCreateConversation:',
+        error.response?.data || error.message
+      );
       throw error;
     }
-  }
+}
 
   /**
    * Send a message to a conversation
@@ -264,13 +265,13 @@ class ChatwootRequest {
         messagePayload.content_type = contentType;
       }
 
-      if (templateParams) {
-        try {
-          messagePayload.template_params = JSON.parse(templateParams);
-        } catch (e) {
-          console.error('Failed to parse template_params:', e);
-        }
-      }
+      // if (templateParams) {
+      //   try {
+      //     messagePayload.template_params = JSON.parse(templateParams);
+      //   } catch (e) {
+      //     console.error('Failed to parse template_params:', e);
+      //   }
+      // }
 
       // Step 4: Send message
       await this.client.post(

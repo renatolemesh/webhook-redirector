@@ -71,3 +71,19 @@ export const getRecentReceivedWebhooks = async (limit: number = 10): Promise<Rec
   );
   return res.rows;
 };
+
+export const getReceivedWebhooksPaginated = async (
+  limit: number,
+  offset: number
+): Promise<ReceivedWebhook[]> => {
+  const res = await pool.query(
+    'SELECT * FROM received_webhooks ORDER BY received_at DESC LIMIT $1 OFFSET $2',
+    [limit, offset]
+  );
+  return res.rows;
+};
+
+export const countReceivedWebhooks = async (): Promise<number> => {
+  const res = await pool.query('SELECT COUNT(*) FROM received_webhooks');
+  return parseInt(res.rows[0].count, 10);
+};

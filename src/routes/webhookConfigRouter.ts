@@ -5,6 +5,8 @@ import {
   updateConfiguredWebhook,
   deleteConfiguredWebhook,
   getRecentReceivedWebhooks,
+  getReceivedWebhooksPaginated,
+  countReceivedWebhooks
 } from '../models/webhookModel';
 import { getJobCounts } from '../models/jobQueueModel';
 import { forwardGetRequest } from '../services/forwarderService';
@@ -85,8 +87,21 @@ router.delete('/webhooks/:id', async (req: Request, res: Response) => {
 // GET /api/received
 router.get('/received', async (req: Request, res: Response) => {
   try {
-    const received = await getRecentReceivedWebhooks(20);
-    res.json(received);
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 20;
+
+    const offset = (page - 1) * limit;
+
+    const received = await getReceivedWebhooksPaginated(limit, offset);
+    const total = await countReceivedWebhooks();
+
+    res.json({
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit),
+      data: received
+    });
   } catch (error) {
     console.error('Error fetching received webhooks:', error);
     res.status(500).json({ error: 'Failed to fetch received webhooks' });

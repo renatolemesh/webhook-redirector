@@ -1,6 +1,7 @@
 services:
   # PostgreSQL Database Service
   db:
+    container_name: webhook-redirector-db
     image: postgres:15-alpine
     restart: always
     environment:

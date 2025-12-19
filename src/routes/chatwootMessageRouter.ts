@@ -63,6 +63,7 @@ router.post('/send', requireApiToken, async (req: Request, res: Response) => {
  */
 router.post('/send-note', requireApiToken, async (req: Request, res: Response) => {
   try {
+    console.log(`Received request to send outgoing message and private note at ${new Date().toISOString()}:`, req.body);
     const { to, content, content_type, template_params, processed_params, contact_name } = req.body;
 
     if (!to || !content) {

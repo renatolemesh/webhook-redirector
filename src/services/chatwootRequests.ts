@@ -1,13 +1,7 @@
 import axios, { AxiosInstance } from 'axios';
 import * as dotenv from 'dotenv';
+import fs from 'fs';
 dotenv.config();
-
-import logger from '../utils/logger';
-
-const CHATWOOT_BASE_URL = process.env.CHATWOOT_BASE_URL;
-const ACCOUNT_ID = process.env.CHATWOOT_ACCOUNT_ID || 1;
-const INBOX_ID = process.env.CHATWOOT_INBOX_ID || 2;
-const API_ACCESS_TOKEN = process.env.CHATWOOT_API_TOKEN;
 
 interface Contact {
   id: number;
@@ -21,47 +15,80 @@ interface MessagePayload {
   message_type: 'outgoing' | 'incoming';
   private?: boolean;
   content_type?: string;
+  content_attributes?: any;
   template_params?: any;
+  source_id?: string;
+  // Original event time, forwarded so Chatwoot can render the message at
+  // the moment WhatsApp produced it instead of the moment our worker
+  // happened to deliver it (which can be much later after retries).
+  external_created_at?: number; // unix epoch seconds (Chatwoot convention)
+  created_at?: string;          // ISO8601, honored by our patched MessageBuilder
 }
 
-class ChatwootRequest {
-  private client: AxiosInstance;
+export interface ChatwootClientConfig {
+  baseUrl: string;
+  apiToken: string;
+  accountId: number;
+  inboxId: number;
+}
 
-  constructor() {
+const attachOriginalTimestamp = (
+  payload: MessagePayload,
+  originalCreatedAt?: Date | string | null
+): void => {
+  if (!originalCreatedAt) return;
+  const date = originalCreatedAt instanceof Date ? originalCreatedAt : new Date(originalCreatedAt);
+  if (Number.isNaN(date.getTime())) return;
+  payload.external_created_at = Math.floor(date.getTime() / 1000);
+  payload.created_at = date.toISOString();
+};
+
+export class ChatwootClient {
+  private client: AxiosInstance;
+  public readonly accountId: number;
+  public readonly inboxId: number;
+  public readonly baseUrl: string;
+
+  constructor(config: ChatwootClientConfig) {
+    this.accountId = config.accountId;
+    this.inboxId = config.inboxId;
+    this.baseUrl = config.baseUrl;
     this.client = axios.create({
-      baseURL: CHATWOOT_BASE_URL,
+      baseURL: config.baseUrl,
+      timeout: 15000,
       headers: {
         'Content-Type': 'application/json',
-        'api_access_token': API_ACCESS_TOKEN,
+        api_access_token: config.apiToken,
       },
     });
   }
 
   /**
-   * Search for a contact by phone number
+   * Search for a contact by phone number.
+   * Returns a contact only when it is an exact match (after stripping `+`),
+   * never a fuzzy `q`-search neighbour, to avoid picking a different DDD
+   * that happens to share the suffix.
    */
   private async searchContact(phoneNumber: string): Promise<Contact | null> {
+    const normalize = (v: string | null | undefined) =>
+      (v || '').replace(/^\+/, '');
+    const target = normalize(phoneNumber);
+
     try {
       const response = await this.client.get(
-        `/api/v1/accounts/${ACCOUNT_ID}/contacts/search`,
-        {
-          params: {
-            q: phoneNumber,
-          },
-        }
+        `/api/v1/accounts/${this.accountId}/contacts/search`,
+        { params: { q: phoneNumber } }
       );
 
       const contacts = response.data.payload;
-      
+
       if (contacts && contacts.length > 0) {
-        // Find exact match by phone number
         const exactMatch = contacts.find(
-          (contact: Contact) => 
-            contact.phone_number === phoneNumber || 
-            contact.identifier === phoneNumber
+          (contact: Contact) =>
+            normalize(contact.phone_number) === target ||
+            normalize(contact.identifier) === target
         );
-        
-        return exactMatch || contacts[0];
+        return exactMatch || null;
       }
 
       return null;
@@ -71,9 +98,6 @@ class ChatwootRequest {
     }
   }
 
-  /**
-   * Create a new contact
-   */
   private async createContact(
     phoneNumber: string,
     name?: string | null
@@ -87,13 +111,12 @@ class ChatwootRequest {
         },
       };
 
-      // Only add name if it is NOT null, undefined, or empty
       if (name) {
         body.name = name;
       }
 
       const response = await this.client.post(
-        `/api/v1/accounts/${ACCOUNT_ID}/contacts`,
+        `/api/v1/accounts/${this.accountId}/contacts`,
         body
       );
 
@@ -104,68 +127,51 @@ class ChatwootRequest {
     }
   }
 
-  /**
-   * Get or create a contact by phone number
-   */
   private async getOrCreateContact(
     phoneNumber: string,
     name?: string
   ): Promise<Contact> {
-    // Remove the "+" if present
     let cleanNumber = phoneNumber.replace(/^\+/, '');
-    if (cleanNumber.length < 12 ) {
+    if (cleanNumber.length < 12) {
       cleanNumber = '55' + cleanNumber;
     }
-    
-    // First, try to find existing contact with the cleaned number
+
     let contact = await this.searchContact(cleanNumber);
-    
     if (contact) {
       console.log(`Contact found with ID: ${contact.id}`);
       return contact;
     }
-    
-    // Check if number has the initial 9 (after country code 55 and area code)
-    // Pattern: 55 (country) + 2 digits (area code) + 9 + 8 digits
+
     const hasInitialNine = /^55\d{2}9\d{8}$/.test(cleanNumber);
-    
+
     if (hasInitialNine) {
-      // Try without the 9 (remove the 9 after area code)
       const withoutNine = cleanNumber.slice(0, 4) + cleanNumber.slice(5);
       contact = await this.searchContact(withoutNine);
-      
       if (contact) {
         console.log(`Contact found without initial 9 with ID: ${contact.id}`);
         return contact;
       }
     } else {
-      // Try with the 9 (add 9 after area code)
       const withNine = cleanNumber.slice(0, 4) + '9' + cleanNumber.slice(4);
       contact = await this.searchContact(withNine);
-      
       if (contact) {
         console.log(`Contact found with initial 9 with ID: ${contact.id}`);
         return contact;
       }
     }
 
-    // If not found, create new contact with the original cleaned number
     console.log('Contact not found, creating new one...');
     contact = await this.createContact(cleanNumber, name);
     console.log(`Contact created with ID: ${contact.id}`);
-    
+
     return contact;
   }
 
-  /**
-   * Get existing conversations for a contact
-   */
   private async getContactConversations(contactId: number): Promise<any[]> {
     try {
       const response = await this.client.get(
-        `/api/v1/accounts/${ACCOUNT_ID}/contacts/${contactId}/conversations`
+        `/api/v1/accounts/${this.accountId}/contacts/${contactId}/conversations`
       );
-
       return response.data.payload || [];
     } catch (error: any) {
       console.error(
@@ -174,18 +180,15 @@ class ChatwootRequest {
       );
       return [];
     }
-}
+  }
 
-  /**
-   * Create a new conversation for the contact
-   */
   private async createConversation(contactId: number): Promise<{ id: number }> {
     try {
       const response = await this.client.post(
-        `/api/v1/accounts/${ACCOUNT_ID}/conversations`,
+        `/api/v1/accounts/${this.accountId}/conversations`,
         {
           source_id: null,
-          inbox_id: INBOX_ID,
+          inbox_id: this.inboxId,
           contact_id: contactId,
           additional_attributes: {
             created_by: 'expertion',
@@ -195,7 +198,7 @@ class ChatwootRequest {
 
       const conversation = response.data;
       console.log(`New conversation created with ID: ${conversation.id}`);
-      
+
       return { id: conversation.id };
     } catch (error: any) {
       console.error('Error creating conversation:', error.response?.data || error.message);
@@ -203,13 +206,7 @@ class ChatwootRequest {
     }
   }
 
-  /**
-   * Get or create a conversation for the contact
-   * First checks for existing open conversations, if none exist, creates a new one
-   */
-  private async getOrCreateConversation(
-    contactId: number
-  ): Promise<{ id: number }> {
+  private async getOrCreateConversation(contactId: number): Promise<{ id: number }> {
     try {
       const conversations = await this.getContactConversations(contactId);
 
@@ -218,9 +215,7 @@ class ChatwootRequest {
       );
 
       if (activeConversation) {
-        console.log(
-          `Using existing conversation with ID: ${activeConversation.id}`
-        );
+        console.log(`Using existing conversation with ID: ${activeConversation.id}`);
         return { id: activeConversation.id };
       }
 
@@ -233,10 +228,10 @@ class ChatwootRequest {
       );
       throw error;
     }
-}
+  }
 
   /**
-   * Send a message to a conversation
+   * Send an OUTGOING message to a conversation (legacy API: /api/chatwoot/send flow).
    */
   async sendMessage(
     phoneNumber: string,
@@ -244,44 +239,61 @@ class ChatwootRequest {
     isPrivate: boolean = false,
     contactName?: string,
     contentType?: string,
-    templateParams?: string
+    templateParams?: string,
+    contentAttributes?: string,
+    originalCreatedAt?: Date | string | null
   ): Promise<string> {
     try {
-      // Step 1: Get or create contact
       const contact = await this.getOrCreateContact(phoneNumber, contactName);
-
-      // Step 2: Get or create conversation
       const conversation = await this.getOrCreateConversation(contact.id);
 
-      // Step 3: Prepare message payload
       const messagePayload: MessagePayload = {
         content,
         message_type: 'outgoing',
         private: isPrivate,
       };
 
-      // Add optional fields if provided
       if (contentType) {
         messagePayload.content_type = contentType;
       }
 
-      // if (templateParams) {
-      //   try {
-      //     messagePayload.template_params = JSON.parse(templateParams);
-      //   } catch (e) {
-      //     console.error('Failed to parse template_params:', e);
-      //   }
-      // }
+      if (!isPrivate && templateParams) {
+        try {
+          messagePayload.template_params = JSON.parse(templateParams);
+        } catch (e) {
+          console.error('Failed to parse template_params:', e);
+        }
+      }
 
-      // Step 4: Send message
+      if (contentAttributes) {
+        try {
+          messagePayload.content_attributes = JSON.parse(contentAttributes);
+        } catch (e) {
+          console.error('Failed to parse content_attributes:', e);
+        }
+      }
+
+      attachOriginalTimestamp(messagePayload, originalCreatedAt);
+
+      try {
+        fs.writeFileSync(
+          '/app/debug/messagePayload.json',
+          JSON.stringify(messagePayload, null, 2)
+        );
+      } catch {
+        // debug dir may not exist in all envs; ignore
+      }
+      console.log('Message payload:', messagePayload);
+
       await this.client.post(
-        `/api/v1/accounts/${ACCOUNT_ID}/conversations/${conversation.id}/messages`,
+        `/api/v1/accounts/${this.accountId}/conversations/${conversation.id}/messages`,
         messagePayload
       );
 
-      const messageUrl = `${CHATWOOT_BASE_URL}/api/v1/accounts/${ACCOUNT_ID}/conversations/${conversation.id}/messages`;
-      
-      console.log(`Message sent successfully to conversation ${conversation.id} (private: ${isPrivate})`);
+      const messageUrl = `${this.baseUrl}/api/v1/accounts/${this.accountId}/conversations/${conversation.id}/messages`;
+      console.log(
+        `Message sent successfully to conversation ${conversation.id} (private: ${isPrivate})`
+      );
       console.log(`Message endpoint: ${messageUrl}`);
 
       return messageUrl;
@@ -292,14 +304,53 @@ class ChatwootRequest {
   }
 
   /**
-   * Get the conversation message endpoint URL for a phone number
+   * Send an INCOMING message to a conversation (used by the dispatcher flow,
+   * for translated UAZAPI interactive messages).
    */
-  async getConversationMessageUrl(phoneNumber: string, contactName?: string): Promise<string> {
+  async sendIncomingMessage(
+    phoneNumber: string,
+    content: string,
+    sourceId?: string,
+    contactName?: string,
+    contentType?: string | null,
+    contentAttributes?: Record<string, unknown> | null,
+    originalCreatedAt?: Date | string | null
+  ): Promise<string> {
     try {
       const contact = await this.getOrCreateContact(phoneNumber, contactName);
       const conversation = await this.getOrCreateConversation(contact.id);
-      
-      return `${CHATWOOT_BASE_URL}/api/v1/accounts/${ACCOUNT_ID}/conversations/${conversation.id}/messages`;
+
+      const messagePayload: MessagePayload = {
+        content,
+        message_type: 'incoming',
+      };
+      if (sourceId) messagePayload.source_id = sourceId;
+      if (contentType) messagePayload.content_type = contentType;
+      if (contentAttributes) messagePayload.content_attributes = contentAttributes;
+      attachOriginalTimestamp(messagePayload, originalCreatedAt);
+
+      await this.client.post(
+        `/api/v1/accounts/${this.accountId}/conversations/${conversation.id}/messages`,
+        messagePayload
+      );
+
+      const messageUrl = `${this.baseUrl}/api/v1/accounts/${this.accountId}/conversations/${conversation.id}/messages`;
+      console.log(`Incoming message posted to conversation ${conversation.id} (source_id=${sourceId || '-'})`);
+      return messageUrl;
+    } catch (error: any) {
+      console.error('Error in sendIncomingMessage:', error.response?.data || error.message);
+      throw error;
+    }
+  }
+
+  async getConversationMessageUrl(
+    phoneNumber: string,
+    contactName?: string
+  ): Promise<string> {
+    try {
+      const contact = await this.getOrCreateContact(phoneNumber, contactName);
+      const conversation = await this.getOrCreateConversation(contact.id);
+      return `${this.baseUrl}/api/v1/accounts/${this.accountId}/conversations/${conversation.id}/messages`;
     } catch (error: any) {
       console.error('Error getting conversation URL:', error.response?.data || error.message);
       throw error;
@@ -307,8 +358,20 @@ class ChatwootRequest {
   }
 }
 
-// Export singleton instance
-export const chatwootRequest = new ChatwootRequest();
+// ---------------------------------------------------------------------------
+// Default singleton, wired from env vars. Preserves existing behavior of the
+// /api/chatwoot/send route and chatwootWorker.
+// ---------------------------------------------------------------------------
 
-// Export class for custom instances if needed
-export default ChatwootRequest;
+const envConfig: ChatwootClientConfig = {
+  baseUrl: process.env.CHATWOOT_BASE_URL || '',
+  apiToken: process.env.CHATWOOT_API_TOKEN || '',
+  accountId: Number(process.env.CHATWOOT_ACCOUNT_ID || 1),
+  inboxId: Number(process.env.CHATWOOT_INBOX_ID || 2),
+};
+
+export const chatwootRequest = new ChatwootClient(envConfig);
+
+// Backwards-compatible alias for any code that imported the old class name.
+export { ChatwootClient as ChatwootRequest };
+export default ChatwootClient;

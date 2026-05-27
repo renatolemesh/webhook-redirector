@@ -13,6 +13,7 @@ export interface ReceivedWebhook {
   id: number;
   received_at: Date;
   payload: any;
+  slug: string | null;
 }
 
 export const getAllConfiguredWebhooks = async (): Promise<ConfiguredWebhook[]> => {
@@ -56,10 +57,13 @@ export const deleteConfiguredWebhook = async (id: number): Promise<boolean> => {
   return ((res.rowCount ?? 0) > 0);
 };
 
-export const saveReceivedWebhook = async (payload: any): Promise<ReceivedWebhook> => {
+export const saveReceivedWebhook = async (
+  payload: any,
+  slug: string | null = null
+): Promise<ReceivedWebhook> => {
   const res = await pool.query(
-    'INSERT INTO received_webhooks (payload) VALUES ($1) RETURNING *',
-    [payload]
+    'INSERT INTO received_webhooks (payload, slug) VALUES ($1, $2) RETURNING *',
+    [payload, slug]
   );
   return res.rows[0];
 };
@@ -74,8 +78,16 @@ export const getRecentReceivedWebhooks = async (limit: number = 10): Promise<Rec
 
 export const getReceivedWebhooksPaginated = async (
   limit: number,
-  offset: number
+  offset: number,
+  slug?: string
 ): Promise<ReceivedWebhook[]> => {
+  if (slug) {
+    const res = await pool.query(
+      'SELECT * FROM received_webhooks WHERE slug = $1 ORDER BY received_at DESC LIMIT $2 OFFSET $3',
+      [slug, limit, offset]
+    );
+    return res.rows;
+  }
   const res = await pool.query(
     'SELECT * FROM received_webhooks ORDER BY received_at DESC LIMIT $1 OFFSET $2',
     [limit, offset]
@@ -83,7 +95,14 @@ export const getReceivedWebhooksPaginated = async (
   return res.rows;
 };
 
-export const countReceivedWebhooks = async (): Promise<number> => {
+export const countReceivedWebhooks = async (slug?: string): Promise<number> => {
+  if (slug) {
+    const res = await pool.query(
+      'SELECT COUNT(*) FROM received_webhooks WHERE slug = $1',
+      [slug]
+    );
+    return parseInt(res.rows[0].count, 10);
+  }
   const res = await pool.query('SELECT COUNT(*) FROM received_webhooks');
   return parseInt(res.rows[0].count, 10);
 };

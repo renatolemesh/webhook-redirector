@@ -89,15 +89,20 @@ router.get('/received', async (req: Request, res: Response) => {
   try {
     const page = parseInt(req.query.page as string) || 1;
     const limit = parseInt(req.query.limit as string) || 20;
+    const slug =
+      typeof req.query.slug === 'string' && req.query.slug.trim()
+        ? req.query.slug.trim()
+        : undefined;
 
     const offset = (page - 1) * limit;
 
-    const received = await getReceivedWebhooksPaginated(limit, offset);
-    const total = await countReceivedWebhooks();
+    const received = await getReceivedWebhooksPaginated(limit, offset, slug);
+    const total = await countReceivedWebhooks(slug);
 
     res.json({
       page,
       limit,
+      slug: slug || null,
       total,
       totalPages: Math.ceil(total / limit),
       data: received

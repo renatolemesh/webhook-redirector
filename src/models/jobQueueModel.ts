@@ -2,7 +2,8 @@ import pool from '../config/database';
 
 export interface WebhookJob {
   id: number;
-  webhook_id: number;
+  webhook_id: number | null;
+  webhook_config_id: number | null;
   payload: any;
   status: 'pending' | 'processing' | 'success' | 'failed';
   attempt_count: number;
@@ -12,12 +13,18 @@ export interface WebhookJob {
 }
 
 /**
- * Adds a new job to the queue for a specific configured webhook.
+ * Adds a new job to the queue. Exactly one of webhookId / webhookConfigId must be set:
+ *   - webhookId       → legacy Meta flow, resolved from configured_webhooks.
+ *   - webhookConfigId → unified flow, resolved from webhook_configs.
  */
-export const createJob = async (webhookId: number, payload: any): Promise<WebhookJob> => {
+export const createJob = async (
+  webhookId: number | null,
+  payload: any,
+  webhookConfigId: number | null = null
+): Promise<WebhookJob> => {
   const res = await pool.query(
-    'INSERT INTO webhook_jobs (webhook_id, payload) VALUES ($1, $2) RETURNING *',
-    [webhookId, payload]
+    'INSERT INTO webhook_jobs (webhook_id, payload, webhook_config_id) VALUES ($1, $2, $3) RETURNING *',
+    [webhookId, payload, webhookConfigId]
   );
   return res.rows[0];
 };

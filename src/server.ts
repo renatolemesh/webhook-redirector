@@ -4,6 +4,8 @@ import connectPgSimple from 'connect-pg-simple';
 import path from 'path';
 import * as dotenv from 'dotenv';
 import webhookConfigRouter from './routes/webhookConfigRouter';
+import webhookConfigsRouter from './routes/webhookConfigsRouter';
+import dynamicWebhookRouter from './routes/dynamicWebhookRouter';
 import chatwootMessageRouter from './routes/chatwootMessageRouter';
 import pool, { initDb } from './config/database';
 import { forwardWebhook } from './services/forwarderService';
@@ -16,6 +18,14 @@ dotenv.config();
 const app = express();
 const PORT = Number(process.env.PORT) || 3005;
 const PgSession = connectPgSimple(session);
+
+process.on('uncaughtException', (err) => {
+  console.error('UNCAUGHT EXCEPTION:', err);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('UNHANDLED REJECTION:', reason);
+});
 
 // 1. Middleware to parse JSON bodies
 app.use(express.json());
@@ -92,8 +102,14 @@ app.get('/', requireLogin, (req: Request, res: Response) => {
 // Chatwoot message API (token auth is handled inside the router)
 app.use('/api/chatwoot', chatwootMessageRouter);
 
-// Webhook configuration API (requires session login - for dashboard)
+// Dynamic per-slug webhook endpoint (public; each config enforces its own token).
+// Covers both the raw_forward and chatwoot_api target types.
+app.use('/webhook', dynamicWebhookRouter);
+
+// Webhook configuration API — legacy (configured_webhooks) and unified (webhook_configs).
+// Both require session login.
 app.use('/api', requireLogin, webhookConfigRouter);
+app.use('/api', requireLogin, webhookConfigsRouter);
 
 
 // --- START SERVER ---

@@ -11,7 +11,8 @@ const router = Router();
  */
 router.post('/send', requireApiToken, async (req: Request, res: Response) => {
   try {
-    const { phone_number, content, message_type, contact_name } = req.body;
+    console.log('BODY RECEIVED:', JSON.stringify(req.body));
+    const { phone_number, content, message_type, contact_name, content_type, template_params, content_attributes } = req.body;
 
     if (!phone_number || !content) {
       return res.status(400).json({ 
@@ -31,7 +32,10 @@ router.post('/send', requireApiToken, async (req: Request, res: Response) => {
       phone_number,
       content,
       validMessageType,
-      contact_name || null
+      contact_name || null,
+      content_type || 'text',
+      template_params ? (typeof template_params === 'string' ? template_params : JSON.stringify(template_params)) : null,
+      content_attributes ? (typeof content_attributes === 'string' ? content_attributes : JSON.stringify(content_attributes)) : null
     );
 
     res.status(201).json({

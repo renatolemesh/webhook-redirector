@@ -1,10 +1,31 @@
 import axios from 'axios';
 import { getDueJobs, updateJobStatus, WebhookJob } from '../models/jobQueueModel';
 import { getAllConfiguredWebhooks, ConfiguredWebhook } from '../models/webhookModel';
+import { getWebhookConfigById, WebhookConfig, RawForwardTargetConfig } from '../models/webhookConfigModel';
 
 const RETRY_SCHEDULE_MS = [0, 0, 0, 0, 10 * 60 * 1000, 30 * 60 * 1000, 60 * 60 * 1000, 6 * 60 * 60 * 1000];
 const MAX_ATTEMPTS = RETRY_SCHEDULE_MS.length;
-const WORKER_INTERVAL_MS = 5000;
+const WORKER_IDLE_INTERVAL_MS = 5000;
+const HTTP_TIMEOUT_MS = 10000;
+const HTTP_HARD_CAP_MS = 15000;
+const PROCESS_JOB_HARD_CAP_MS = 30000;
+const GET_DUE_JOBS_HARD_CAP_MS = 10000;
+const BATCH_SIZE = 20;
+
+const withTimeout = <T>(p: Promise<T>, ms: number, label: string): Promise<T> => {
+  let timer: NodeJS.Timeout | undefined;
+  const guard = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+  });
+  return Promise.race([p, guard]).finally(() => clearTimeout(timer));
+};
+
+interface ResolvedTarget {
+  name: string;
+  url: string;
+  token: string | null;
+  isActive: boolean;
+}
 
 let webhookCache: Map<number, ConfiguredWebhook> = new Map();
 
@@ -21,10 +42,32 @@ const calculateNextAttemptTime = (attemptCount: number): Date => {
   return new Date(Date.now() + delayMs);
 };
 
-const processJob = async (job: WebhookJob) => {
-  const webhook = webhookCache.get(job.webhook_id);
+/**
+ * Resolve a job's outbound target:
+ *  - Legacy: job.webhook_id references configured_webhooks.
+ *  - Unified: job.webhook_config_id references webhook_configs with target_type=raw_forward.
+ */
+const resolveTarget = async (job: WebhookJob): Promise<ResolvedTarget | null> => {
+  if (job.webhook_id) {
+    const wh = webhookCache.get(job.webhook_id);
+    if (!wh) return null;
+    return { name: wh.name, url: wh.url, token: wh.verification_token || null, isActive: wh.is_active };
+  }
+  if (job.webhook_config_id) {
+    const cfg: WebhookConfig | null = await getWebhookConfigById(job.webhook_config_id);
+    if (!cfg) return null;
+    if (cfg.target_type !== 'raw_forward') return null;
+    const target = cfg.target_config as RawForwardTargetConfig;
+    if (!target?.url) return null;
+    return { name: cfg.name, url: target.url, token: cfg.inbound_token, isActive: cfg.is_active };
+  }
+  return null;
+};
 
-  if (!webhook || !webhook.is_active) {
+const processJob = async (job: WebhookJob) => {
+  const target = await resolveTarget(job);
+
+  if (!target || !target.isActive) {
     await updateJobStatus(job.id, 'failed', job.attempt_count, null, 'Target webhook is inactive or deleted.');
     return;
   }
@@ -41,25 +84,25 @@ const processJob = async (job: WebhookJob) => {
       'X-Attempt-Count': newAttemptCount.toString(),
     };
 
-    if (webhook.verification_token) {
-      // header name you agree with Evolution/Chatwoot, e.g. same as Chatwoot expects
-      headers['X-Webhook-Token'] = webhook.verification_token;
+    if (target.token) {
+      headers['X-Webhook-Token'] = target.token;
     }
 
-    const response = await axios.post(webhook.url, job.payload, {
+    const response = await axios.post(target.url, job.payload, {
       headers,
-      timeout: 10000,
+      timeout: HTTP_TIMEOUT_MS,
+      signal: AbortSignal.timeout(HTTP_HARD_CAP_MS),
     });
 
     if (response.status >= 200 && response.status < 300) {
       status = 'success';
-      console.log(`Job ${job.id} forwarded successfully to ${webhook.name}.`);
+      console.log(`Job ${job.id} forwarded successfully to ${target.name}.`);
     } else {
       throw new Error(`Non-success status code: ${response.status}`);
     }
   } catch (error: any) {
     errorMessage = error.message || 'Unknown error during forwarding.';
-    console.error(`Job ${job.id} failed attempt ${newAttemptCount} to ${webhook.name}: ${errorMessage}`);
+    console.error(`Job ${job.id} failed attempt ${newAttemptCount} to ${target.name}: ${errorMessage}`);
 
     if (newAttemptCount < MAX_ATTEMPTS) {
       status = 'pending';
@@ -79,23 +122,34 @@ const processJob = async (job: WebhookJob) => {
 };
 
 const workerLoop = async () => {
+  let foundJobs = false;
   try {
     if (webhookCache.size === 0) {
       await loadWebhookCache();
     }
 
-    const jobs = await getDueJobs(10);
+    const jobs = await withTimeout(getDueJobs(BATCH_SIZE), GET_DUE_JOBS_HARD_CAP_MS, 'getDueJobs');
+    foundJobs = jobs.length > 0;
 
-    if (jobs.length > 0) {
+    if (foundJobs) {
       console.log(`Worker found ${jobs.length} jobs to process.`);
-      for (const job of jobs) {
-        await processJob(job);
-      }
+      // Process the batch in parallel. Each job is independently bounded by
+      // PROCESS_JOB_HARD_CAP_MS, and Promise.allSettled isolates failures so
+      // one bad target doesn't stall the rest of the batch.
+      await Promise.allSettled(
+        jobs.map((job) =>
+          withTimeout(processJob(job), PROCESS_JOB_HARD_CAP_MS, `processJob ${job.id}`).catch((err) => {
+            console.error(`Job ${job.id} aborted:`, err?.message || err);
+          })
+        )
+      );
     }
   } catch (error) {
     console.error('Error in worker loop:', error);
   } finally {
-    setTimeout(workerLoop, WORKER_INTERVAL_MS);
+    // Drain mode: when we just processed a full(ish) batch, loop again immediately.
+    // Idle mode: 5s sleep so we don't pound the DB on an empty queue.
+    setTimeout(workerLoop, foundJobs ? 0 : WORKER_IDLE_INTERVAL_MS);
   }
 };
 

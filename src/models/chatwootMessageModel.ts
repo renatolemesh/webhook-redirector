@@ -5,7 +5,7 @@ export interface ChatwootMessage {
   phone_number: string;
   contact_name: string | null;
   content: string;
-  message_type: 'outgoing' | 'note';
+  message_type: 'outgoing' | 'note' | 'incoming';
   status: 'pending' | 'processing' | 'success' | 'failed';
   attempt_count: number;
   next_attempt_at: Date | null;
@@ -15,10 +15,16 @@ export interface ChatwootMessage {
   template_params: string | null;
   processed_params: string | null;
   created_at: Date;
+  // Columns added by the unified dispatch flow:
+  webhook_config_id: number | null;
+  source_id: string | null;
+  target_config: Record<string, unknown> | null;
+  content_attributes: Record<string, unknown> | null;
 }
 
 /**
- * Create a new Chatwoot message job
+ * Create a new Chatwoot message job (legacy positional API — do not change,
+ * callers /api/chatwoot/send and /api/chatwoot/send-note rely on it).
  */
 export const createChatwootMessage = async (
   phoneNumber: string,
@@ -30,11 +36,50 @@ export const createChatwootMessage = async (
   processedParams?: string | null
 ): Promise<ChatwootMessage> => {
   const res = await pool.query(
-    `INSERT INTO chatwoot_messages 
-     (phone_number, contact_name, content, message_type, content_type, template_params, processed_params) 
-     VALUES ($1, $2, $3, $4, $5, $6, $7) 
+    `INSERT INTO chatwoot_messages
+     (phone_number, contact_name, content, message_type, content_type, template_params, processed_params)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
      RETURNING *`,
     [phoneNumber, contactName || null, content, messageType, contentType || null, templateParams || null, processedParams || null]
+  );
+  return res.rows[0];
+};
+
+/**
+ * Create an INCOMING Chatwoot message from the unified dispatcher flow.
+ * Carries the target Chatwoot instance's config so the worker can POST to
+ * the correct Chatwoot without touching env vars.
+ */
+export interface IncomingChatwootMessageInput {
+  phone_number: string;
+  content: string;
+  message_type?: 'incoming';
+  contact_name?: string | null;
+  source_id?: string;
+  webhook_config_id?: number;
+  target_config: Record<string, unknown>;
+  content_type?: string | null;
+  content_attributes?: Record<string, unknown> | null;
+}
+
+export const createIncomingChatwootMessage = async (
+  input: IncomingChatwootMessageInput
+): Promise<ChatwootMessage> => {
+  const res = await pool.query(
+    `INSERT INTO chatwoot_messages
+       (phone_number, contact_name, content, message_type, source_id, webhook_config_id, target_config, content_type, content_attributes)
+     VALUES ($1, $2, $3, 'incoming', $4, $5, $6, $7, $8)
+     RETURNING *`,
+    [
+      input.phone_number,
+      input.contact_name || null,
+      input.content,
+      input.source_id || null,
+      input.webhook_config_id || null,
+      JSON.stringify(input.target_config),
+      input.content_type || null,
+      input.content_attributes ? JSON.stringify(input.content_attributes) : null,
+    ]
   );
   return res.rows[0];
 };

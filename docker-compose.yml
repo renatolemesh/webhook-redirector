@@ -45,6 +45,8 @@ services:
       DB_NAME: ${DB_NAME}
       ADMIN_USERNAME: ${ADMIN_USERNAME}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+    volumes:
+    - ./docker_data/debug:/app/debug
     depends_on:
       db:
         condition: service_healthy # Wait for the database to be ready

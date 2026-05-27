@@ -3,296 +3,920 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Meta Webhook Forwarder Configuration</title>
-    <style>
-        body { font-family: Arial, sans-serif; margin: 20px; background-color: #f4f4f9; }
-        .container { max-width: 900px; margin: auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-        h1, h2 { color: #333; }
-        .form-group { margin-bottom: 15px; }
-        label { display: block; margin-bottom: 5px; font-weight: bold; }
-        input[type="text"], input[type="url"] { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
-        button { background-color: #007bff; color: white; padding: 10px 15px; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; }
-        button:hover { background-color: #0056b3; }
-        .webhook-list { margin-top: 20px; }
-        .webhook-item { padding: 10px; border: 1px solid #eee; margin-bottom: 10px; border-radius: 4px; display: flex; justify-content: space-between; align-items: center; }
-        .webhook-item.inactive { background-color: #ffebeb; border-left: 5px solid #dc3545; }
-        .webhook-item.active { border-left: 5px solid #28a745; }
-        .webhook-details { flex-grow: 1; }
-        .webhook-details p { margin: 5px 0; }
-        .webhook-actions button { margin-left: 10px; padding: 5px 10px; font-size: 14px; }
-        .status-log { margin-top: 30px; border-top: 1px solid #ccc; padding-top: 20px; }
-        .log-item { background-color: #f9f9f9; padding: 10px; margin-bottom: 10px; border-radius: 4px; white-space: pre-wrap; word-break: break-all; }
-        .token-field { font-family: monospace; font-size: 12px; }
-        .info-box { background-color: #e7f3ff; border-left: 4px solid #2196F3; padding: 12px; margin-bottom: 20px; }
-        .info-box code { background-color: #fff; padding: 2px 6px; border-radius: 3px; }
-    </style>
+    <title>Webhook Redirector — Dashboard</title>
+    <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
-    <div class="container">
-        <h1>Meta Webhook Forwarder</h1>
-        <p>Use this interface to configure the endpoints where Meta's WhatsApp webhooks will be forwarded.</p>
+<div class="app-shell">
 
-        <div class="info-box">
-            <strong>How tokens work:</strong>
-            <ul>
-                <li><strong>Meta verify token</strong> comes from <code>VERIFY_TOKEN</code> in your <code>.env</code> and is used only on <code>GET /webhook</code>.</li>
-                <li><strong>Verification Token (below)</strong> is per target (Evolution, Chatwoot, etc). It is forwarded to them (e.g. in header <code>X-Webhook-Token</code>) so they can validate the request.</li>
-                <li>This lets you have different tokens for Evolution and Chatwoot even though Meta itself uses only one verification token.</li>
-            </ul>
+    <header class="topbar">
+        <div class="topbar__inner">
+            <a class="brand" href="#">
+                <span class="brand__mark">W</span>
+                <span>Webhook Redirector</span>
+            </a>
+            <nav class="topbar__nav" id="primaryNav">
+                <a href="#endpoints" data-tab="endpoints" class="active">Endpoints</a>
+                <a href="#legacy" data-tab="legacy">Legacy</a>
+                <a href="#jobs" data-tab="jobs">Jobs</a>
+                <a href="#received" data-tab="received">Received</a>
+            </nav>
+            <div class="topbar__spacer"></div>
+            <button class="btn btn--ghost btn--sm" onclick="logout()">Sign out</button>
         </div>
+    </header>
 
-        <h2>Add New Webhook</h2>
-        <form id="addWebhookForm">
-            <div class="form-group">
-                <label for="webhookName">Name (e.g., Evolution, Chatwoot)</label>
-                <input type="text" id="webhookName" required>
+    <main class="container">
+
+        <div class="page-title">
+            <div>
+                <h1>Dashboard</h1>
+                <p>Configure endpoints, watch the queue, replay raw payloads.</p>
             </div>
-            <div class="form-group">
-                <label for="webhookUrl">Target URL</label>
-                <input type="url" id="webhookUrl" required placeholder="https://your-service.com/webhook">
+        </div>
+
+        <!-- Stats -->
+        <div class="stats" id="statsGrid">
+            <div class="stat"><div class="stat__label">Active endpoints</div><div class="stat__value" id="statActive">–</div><div class="stat__sub" id="statActiveSub">&nbsp;</div></div>
+            <div class="stat"><div class="stat__label">Jobs pending</div><div class="stat__value" id="statPending">–</div><div class="stat__sub" id="statPendingSub">&nbsp;</div></div>
+            <div class="stat"><div class="stat__label">Jobs failed</div><div class="stat__value" id="statFailed">–</div><div class="stat__sub" id="statFailedSub">&nbsp;</div></div>
+            <div class="stat"><div class="stat__label">Received (24h)</div><div class="stat__value" id="statReceived">–</div><div class="stat__sub" id="statReceivedSub">&nbsp;</div></div>
+        </div>
+
+        <!-- ENDPOINTS (unified) -->
+        <section id="tab-endpoints" class="tab-pane">
+            <div class="card">
+                <div class="card__header">
+                    <div>
+                        <h2>Webhook endpoints</h2>
+                        <div class="subtitle">Per-endpoint config. Each row exposes <code>POST /webhook/&lt;slug&gt;</code>.</div>
+                    </div>
+                    <button class="btn btn--primary btn--sm" onclick="toggleAddConfig()">
+                        <span id="addConfigIcon">+</span>
+                        <span id="addConfigLabel">New endpoint</span>
+                    </button>
+                </div>
+
+                <details class="collapsible" id="addConfigDetails">
+                    <summary style="display:none"></summary>
+                    <div class="body">
+                        <div class="callout" style="margin-bottom:16px">
+                            <strong>Source types</strong> define the incoming payload shape; <strong>target types</strong> decide what we do with it.
+                            <ul>
+                              <li><code>raw_forward</code> — POST the payload verbatim to a URL (Eletrofast-style).</li>
+                              <li><code>chatwoot_api</code> — parse the payload and post to Chatwoot's REST API.</li>
+                            </ul>
+                        </div>
+                        <form id="addConfigForm">
+                            <div class="form-grid">
+                                <div class="field">
+                                    <label for="cfgName">Name</label>
+                                    <input type="text" id="cfgName" required>
+                                </div>
+                                <div class="field">
+                                    <label for="cfgSlug">Slug</label>
+                                    <input type="text" id="cfgSlug" required placeholder="smartmd-uazapi" pattern="[a-z0-9][a-z0-9-]{0,63}">
+                                    <span class="hint">URL-safe. Becomes <code>/webhook/&lt;slug&gt;</code>.</span>
+                                </div>
+                                <div class="field">
+                                    <label for="cfgSourceType">Source type</label>
+                                    <select id="cfgSourceType" required>
+                                        <option value="uazapi">uazapi</option>
+                                        <option value="meta_cloud_api">meta_cloud_api</option>
+                                    </select>
+                                </div>
+                                <div class="field">
+                                    <label for="cfgInboundToken">Inbound token</label>
+                                    <input type="text" id="cfgInboundToken" placeholder="(optional, validates X-Webhook-Token)">
+                                </div>
+                                <div class="field">
+                                    <label for="cfgTargetType">Target type</label>
+                                    <select id="cfgTargetType" required>
+                                        <option value="chatwoot_api">chatwoot_api</option>
+                                        <option value="raw_forward">raw_forward</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <div id="rawForwardFields">
+                                <div class="field">
+                                    <label for="cfgTargetUrl">Target URL</label>
+                                    <input type="url" id="cfgTargetUrl" placeholder="https://chatwoot.example.com/webhooks/whatsapp/+5511...">
+                                </div>
+                            </div>
+
+                            <div id="chatwootApiFields">
+                                <div class="form-grid">
+                                    <div class="field">
+                                        <label for="cfgCwBase">Chatwoot base URL</label>
+                                        <input type="url" id="cfgCwBase" placeholder="https://connect.synapsea.com.br">
+                                    </div>
+                                    <div class="field">
+                                        <label for="cfgCwToken">Chatwoot api_access_token</label>
+                                        <input type="text" id="cfgCwToken" placeholder="Z4pgqdwX...">
+                                    </div>
+                                    <div class="field">
+                                        <label for="cfgCwAccount">Account ID</label>
+                                        <input type="number" id="cfgCwAccount" placeholder="1">
+                                    </div>
+                                    <div class="field">
+                                        <label for="cfgCwInbox">Inbox ID</label>
+                                        <input type="number" id="cfgCwInbox" placeholder="3">
+                                        <span class="hint">Used when creating a new conversation.</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="btn-group" style="margin-top:8px">
+                                <button class="btn btn--primary" type="submit">Save endpoint</button>
+                                <button class="btn" type="button" onclick="toggleAddConfig(false)">Cancel</button>
+                            </div>
+                        </form>
+                    </div>
+                </details>
+
+                <div id="configList"><div class="empty">Loading endpoints…</div></div>
             </div>
-            <div class="form-group">
-                <label for="webhookToken">Verification Token (optional, for Evolution/Chatwoot)</label>
-                <input type="text" id="webhookToken" class="token-field" placeholder="e.g. evolution_token_123">
-                <small>This token will be stored with this webhook and forwarded in a header like <code>X-Webhook-Token</code> to your target.</small>
+        </section>
+
+        <!-- LEGACY -->
+        <section id="tab-legacy" class="tab-pane hide">
+            <div class="card">
+                <div class="card__header">
+                    <div>
+                        <h2>Legacy webhooks</h2>
+                        <div class="subtitle">
+                            Rows in <code>configured_webhooks</code> — still authoritative for existing Meta Cloud API forwarding. Kept for rollback.
+                        </div>
+                    </div>
+                    <button class="btn btn--sm" onclick="toggleAddLegacy()">
+                        <span id="addLegacyLabel">+ New legacy webhook</span>
+                    </button>
+                </div>
+
+                <details class="collapsible" id="addLegacyDetails">
+                    <summary style="display:none"></summary>
+                    <div class="body">
+                        <div class="callout" style="margin-bottom:16px">
+                            <strong>How tokens work here:</strong>
+                            <ul>
+                                <li><strong>Meta verify token</strong> comes from <code>VERIFY_TOKEN</code> in <code>.env</code>, used only on <code>GET /webhook</code>.</li>
+                                <li><strong>Verification token</strong> below is per target — forwarded to the downstream as <code>X-Webhook-Token</code>.</li>
+                            </ul>
+                        </div>
+                        <form id="addWebhookForm">
+                            <div class="form-grid">
+                                <div class="field">
+                                    <label for="webhookName">Name</label>
+                                    <input type="text" id="webhookName" required>
+                                </div>
+                                <div class="field">
+                                    <label for="webhookUrl">Target URL</label>
+                                    <input type="url" id="webhookUrl" required placeholder="https://...">
+                                </div>
+                                <div class="field">
+                                    <label for="webhookToken">Verification token</label>
+                                    <input type="text" id="webhookToken" placeholder="(optional)">
+                                </div>
+                            </div>
+                            <div class="btn-group" style="margin-top:8px">
+                                <button class="btn btn--primary" type="submit">Save webhook</button>
+                                <button class="btn" type="button" onclick="toggleAddLegacy(false)">Cancel</button>
+                            </div>
+                        </form>
+                    </div>
+                </details>
+
+                <div id="webhookList"><div class="empty">Loading webhooks…</div></div>
             </div>
-            <button type="submit">Add Webhook</button>
-        </form>
+        </section>
 
-        <h2>Configured Webhooks</h2>
-        <div id="webhookList" class="webhook-list">
-            <p>Loading webhooks...</p>
+        <!-- JOBS -->
+        <section id="tab-jobs" class="tab-pane hide">
+            <div class="card">
+                <div class="card__header">
+                    <div>
+                        <h2>Job queue</h2>
+                        <div class="subtitle">Outbound forwarding queue. Refreshes every 10s.</div>
+                    </div>
+                </div>
+                <div class="card__body">
+                    <div class="stats" id="jobStatus" style="margin-bottom:0"><div class="empty">Loading…</div></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- RECEIVED LOG -->
+        <section id="tab-received" class="tab-pane hide">
+            <div class="card">
+                <div class="card__header">
+                    <div>
+                        <h2>Received webhooks</h2>
+                        <div class="subtitle">Last 20 inbound payloads (newest first). Click to expand.</div>
+                    </div>
+                </div>
+                <div id="receivedLog"><div class="empty">Loading log…</div></div>
+            </div>
+        </section>
+
+    </main>
+</div>
+
+<!-- ===== Edit endpoint dialog ===== -->
+<dialog id="editConfigDialog">
+    <form id="editConfigForm" method="dialog">
+        <div class="dialog__header">
+            <h2>Edit endpoint</h2>
+            <button type="button" class="dialog__close" onclick="closeEditConfig()" aria-label="Close">×</button>
         </div>
-
-        <h2>Job Queue Status</h2>
-        <div id="jobStatus" class="webhook-list">
-            <p>Loading job status...</p>
+        <div class="dialog__body">
+            <input type="hidden" name="id" id="editCfgId">
+            <div class="form-grid">
+                <div class="field">
+                    <label for="editCfgName">Name</label>
+                    <input type="text" id="editCfgName" required>
+                </div>
+                <div class="field">
+                    <label for="editCfgSlug">Slug</label>
+                    <input type="text" id="editCfgSlug" required pattern="[a-z0-9][a-z0-9-]{0,63}">
+                    <span class="hint">Changing the slug changes the inbound URL.</span>
+                </div>
+                <div class="field">
+                    <label for="editCfgSourceType">Source type</label>
+                    <select id="editCfgSourceType" required>
+                        <option value="uazapi">uazapi</option>
+                        <option value="meta_cloud_api">meta_cloud_api</option>
+                    </select>
+                </div>
+                <div class="field">
+                    <label for="editCfgInboundToken">Inbound token</label>
+                    <input type="text" id="editCfgInboundToken" placeholder="(optional)">
+                </div>
+                <div class="field">
+                    <label for="editCfgTargetType">Target type</label>
+                    <select id="editCfgTargetType" required>
+                        <option value="chatwoot_api">chatwoot_api</option>
+                        <option value="raw_forward">raw_forward</option>
+                    </select>
+                </div>
+                <div class="field">
+                    <label for="editCfgActive">Status</label>
+                    <select id="editCfgActive">
+                        <option value="true">Active</option>
+                        <option value="false">Inactive</option>
+                    </select>
+                </div>
+            </div>
+            <div id="editRawForwardFields">
+                <div class="field">
+                    <label for="editCfgTargetUrl">Target URL</label>
+                    <input type="url" id="editCfgTargetUrl">
+                </div>
+            </div>
+            <div id="editChatwootApiFields">
+                <div class="form-grid">
+                    <div class="field">
+                        <label for="editCfgCwBase">Chatwoot base URL</label>
+                        <input type="url" id="editCfgCwBase">
+                    </div>
+                    <div class="field">
+                        <label for="editCfgCwToken">Chatwoot api_access_token</label>
+                        <input type="text" id="editCfgCwToken">
+                    </div>
+                    <div class="field">
+                        <label for="editCfgCwAccount">Account ID</label>
+                        <input type="number" id="editCfgCwAccount">
+                    </div>
+                    <div class="field">
+                        <label for="editCfgCwInbox">Inbox ID</label>
+                        <input type="number" id="editCfgCwInbox">
+                    </div>
+                </div>
+            </div>
         </div>
-
-        <h2 class="status-log">Recent Received Webhooks (Last 20)</h2>
-        <div id="receivedLog" class="status-log">
-            <p>Loading log...</p>
+        <div class="dialog__footer">
+            <button type="button" class="btn" onclick="closeEditConfig()">Cancel</button>
+            <button type="submit" class="btn btn--primary">Save changes</button>
         </div>
-    </div>
+    </form>
+</dialog>
 
-    <script>
-        async function logout() {
-            await fetch('/auth/logout', { method: 'POST' });
+<!-- ===== Edit legacy webhook dialog ===== -->
+<dialog id="editLegacyDialog">
+    <form id="editLegacyForm" method="dialog">
+        <div class="dialog__header">
+            <h2>Edit legacy webhook</h2>
+            <button type="button" class="dialog__close" onclick="closeEditLegacy()" aria-label="Close">×</button>
+        </div>
+        <div class="dialog__body">
+            <input type="hidden" id="editWhId">
+            <div class="field">
+                <label for="editWhName">Name</label>
+                <input type="text" id="editWhName" required>
+            </div>
+            <div class="field">
+                <label for="editWhUrl">Target URL</label>
+                <input type="url" id="editWhUrl" required>
+            </div>
+            <div class="field">
+                <label for="editWhToken">Verification token</label>
+                <input type="text" id="editWhToken" placeholder="(optional)">
+            </div>
+            <div class="field">
+                <label for="editWhActive">Status</label>
+                <select id="editWhActive">
+                    <option value="true">Active</option>
+                    <option value="false">Inactive</option>
+                </select>
+            </div>
+        </div>
+        <div class="dialog__footer">
+            <button type="button" class="btn" onclick="closeEditLegacy()">Cancel</button>
+            <button type="submit" class="btn btn--primary">Save changes</button>
+        </div>
+    </form>
+</dialog>
+
+<div class="toast-stack" id="toastStack"></div>
+
+<script>
+    // ---------- Shared util ----------
+
+    const API_BASE = '/api';
+
+    // Redirect to login on 401
+    const originalFetch = window.fetch;
+    window.fetch = async function(...args) {
+        const response = await originalFetch(...args);
+        if (response.status === 401) {
             window.location.href = '/login.html';
         }
-        
-        // Update your init function to handle 401 (Unauthorized) errors
-        // If fetchWebhooks returns 401, redirect to login
-        const originalFetch = window.fetch;
-        window.fetch = async function(...args) {
-            const response = await originalFetch(...args);
-            if (response.status === 401) {
-                window.location.href = '/login.html';
+        return response;
+    };
+
+    function toast(message, variant = '') {
+        const el = document.createElement('div');
+        el.className = 'toast' + (variant ? ' toast--' + variant : '');
+        el.textContent = message;
+        document.getElementById('toastStack').appendChild(el);
+        setTimeout(() => el.remove(), 3400);
+    }
+
+    function escapeHtml(str) {
+        if (str == null) return '';
+        return String(str)
+            .replaceAll('&', '&amp;')
+            .replaceAll('<', '&lt;')
+            .replaceAll('>', '&gt;')
+            .replaceAll('"', '&quot;')
+            .replaceAll("'", '&#39;');
+    }
+
+    function copyToClipboard(text, btn) {
+        navigator.clipboard.writeText(text).then(() => {
+            if (btn) {
+                const original = btn.textContent;
+                btn.classList.add('copied');
+                btn.textContent = 'Copied';
+                setTimeout(() => { btn.textContent = original; btn.classList.remove('copied'); }, 1400);
             }
-            return response;
+            toast('Copied to clipboard', 'success');
+        }).catch(() => toast('Copy failed', 'error'));
+    }
+
+    async function logout() {
+        await fetch('/auth/logout', { method: 'POST' });
+        window.location.href = '/login.html';
+    }
+
+    // ---------- Tabs ----------
+
+    function activateTab(name) {
+        document.querySelectorAll('.tab-pane').forEach(p => p.classList.add('hide'));
+        const pane = document.getElementById('tab-' + name);
+        if (pane) pane.classList.remove('hide');
+        document.querySelectorAll('#primaryNav a').forEach(a => a.classList.toggle('active', a.dataset.tab === name));
+        if (history.replaceState) history.replaceState(null, '', '#' + name);
+    }
+
+    document.getElementById('primaryNav').addEventListener('click', (e) => {
+        const link = e.target.closest('a[data-tab]');
+        if (!link) return;
+        e.preventDefault();
+        activateTab(link.dataset.tab);
+    });
+
+    // ---------- Unified endpoints (webhook_configs) ----------
+
+    function updateConfigTargetVisibility() {
+        const t = document.getElementById('cfgTargetType').value;
+        document.getElementById('rawForwardFields').style.display = t === 'raw_forward' ? '' : 'none';
+        document.getElementById('chatwootApiFields').style.display = t === 'chatwoot_api' ? '' : 'none';
+    }
+
+    function toggleAddConfig(forceOpen) {
+        const d = document.getElementById('addConfigDetails');
+        if (forceOpen === false) { d.open = false; return; }
+        d.open = forceOpen === true ? true : !d.open;
+    }
+
+    let configsCache = [];
+    let legacyCache = [];
+
+    async function fetchConfigs() {
+        const response = await fetch(`${API_BASE}/webhook-configs`);
+        const data = await response.json();
+        configsCache = Array.isArray(data) ? data : [];
+        return configsCache;
+    }
+
+    function maskToken(t) {
+        if (!t) return '—';
+        if (t.length <= 10) return t.slice(0, 4) + '…';
+        return t.slice(0, 6) + '…' + t.slice(-4);
+    }
+
+    function targetConfigHtml(cfg) {
+        if (cfg.target_type === 'raw_forward') {
+            const url = cfg.target_config?.url || '—';
+            return `<span><strong>→</strong> <code>${escapeHtml(url)}</code></span>`;
+        }
+        if (cfg.target_type === 'chatwoot_api') {
+            const t = cfg.target_config || {};
+            return `
+              <span><strong>Chatwoot:</strong> <code>${escapeHtml(t.base_url || '—')}</code></span>
+              <span><strong>account:</strong> ${escapeHtml(String(t.account_id ?? '—'))}</span>
+              <span><strong>inbox:</strong> ${escapeHtml(String(t.inbox_id ?? '—'))}</span>
+              <span><strong>token:</strong> <code>${escapeHtml(maskToken(t.api_token))}</code></span>`;
+        }
+        return '';
+    }
+
+    async function renderConfigs() {
+        const el = document.getElementById('configList');
+        try {
+            const configs = await fetchConfigs();
+            renderConfigStats(configs);
+            if (!configs.length) {
+                el.innerHTML = '<div class="empty">No endpoints yet. Click <em>+ New endpoint</em> to add one.</div>';
+                return;
+            }
+            const base = window.location.origin;
+            el.innerHTML = configs.map(cfg => {
+                const inboundUrl = `${base}/webhook/${cfg.slug}`;
+                const statusBadge = cfg.is_active
+                    ? '<span class="badge badge--active">Active</span>'
+                    : '<span class="badge badge--inactive">Inactive</span>';
+                const tokenRow = cfg.inbound_token
+                    ? `<span><strong>Inbound token:</strong> <code>${escapeHtml(maskToken(cfg.inbound_token))}</code></span>`
+                    : '<span class="text-muted">No inbound token</span>';
+                return `
+                  <div class="row ${cfg.is_active ? '' : 'row--inactive'}">
+                    <div class="row__main">
+                      <div class="row__title">
+                        <span class="name">${escapeHtml(cfg.name)}</span>
+                        ${statusBadge}
+                        <span class="badge badge--plain">${escapeHtml(cfg.source_type)} → ${escapeHtml(cfg.target_type)}</span>
+                      </div>
+                      <div class="row__meta">
+                        <span class="copyable">
+                          <span class="url">${escapeHtml(inboundUrl)}</span>
+                          <button type="button" onclick="copyToClipboard('${inboundUrl.replace(/'/g, "\\'")}', this)">Copy</button>
+                        </span>
+                      </div>
+                      <div class="row__meta">
+                        ${targetConfigHtml(cfg)}
+                        ${tokenRow}
+                      </div>
+                    </div>
+                    <div class="row__actions">
+                      <button class="btn btn--sm" onclick="openEditConfig(${cfg.id})">Edit</button>
+                      <button class="btn btn--sm" onclick="toggleConfigStatus(${cfg.id}, ${!cfg.is_active})">${cfg.is_active ? 'Deactivate' : 'Activate'}</button>
+                      <button class="btn btn--sm btn--danger" onclick="deleteConfig(${cfg.id})">Delete</button>
+                    </div>
+                  </div>`;
+            }).join('');
+        } catch (err) {
+            el.innerHTML = '<div class="empty">Failed to load endpoints.</div>';
+            console.error(err);
+        }
+    }
+
+    function renderConfigStats(configs) {
+        const active = configs.filter(c => c.is_active).length;
+        document.getElementById('statActive').textContent = active;
+        document.getElementById('statActiveSub').textContent = `${configs.length} total`;
+    }
+
+    document.getElementById('cfgTargetType').addEventListener('change', updateConfigTargetVisibility);
+
+    document.getElementById('addConfigForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const target_type = document.getElementById('cfgTargetType').value;
+        const body = {
+            name: document.getElementById('cfgName').value.trim(),
+            slug: document.getElementById('cfgSlug').value.trim(),
+            source_type: document.getElementById('cfgSourceType').value,
+            inbound_token: document.getElementById('cfgInboundToken').value.trim() || null,
+            target_type,
+            target_config: {},
         };
-
-        const API_BASE = '/api';
-
-        // --- Webhook Configuration Functions ---
-
-        async function fetchWebhooks() {
-            const response = await fetch(`${API_BASE}/webhooks`);
-            return response.json();
+        if (target_type === 'raw_forward') {
+            body.target_config = { url: document.getElementById('cfgTargetUrl').value.trim() };
+        } else {
+            body.target_config = {
+                base_url: document.getElementById('cfgCwBase').value.trim(),
+                api_token: document.getElementById('cfgCwToken').value.trim(),
+                account_id: parseInt(document.getElementById('cfgCwAccount').value, 10),
+            };
+            const inbox = document.getElementById('cfgCwInbox').value;
+            if (inbox) body.target_config.inbox_id = parseInt(inbox, 10);
         }
 
-        async function renderWebhooks() {
-            const listElement = document.getElementById('webhookList');
-            listElement.innerHTML = '';
-            try {
-                const webhooks = await fetchWebhooks();
-                if (webhooks.length === 0) {
-                    listElement.innerHTML = '<p>No webhooks configured yet.</p>';
-                    return;
-                }
-
-                webhooks.forEach(webhook => {
-                    const item = document.createElement('div');
-                    item.className = `webhook-item ${webhook.is_active ? 'active' : 'inactive'}`;
-                    const tokenDisplay = webhook.verification_token
-                        ? `<p><small><strong>Token:</strong> <code>${webhook.verification_token}</code></small></p>`
-                        : '';
-                    item.innerHTML = `
-                        <div class="webhook-details">
-                            <p><strong>${webhook.name}</strong> (${webhook.is_active ? 'Active' : 'Inactive'})</p>
-                            <p><strong>URL:</strong> <code>${webhook.url}</code></p>
-                            ${tokenDisplay}
-                        </div>
-                        <div class="webhook-actions">
-                            <button onclick="toggleWebhookStatus(${webhook.id}, ${!webhook.is_active})">
-                                ${webhook.is_active ? 'Deactivate' : 'Activate'}
-                            </button>
-                            <button onclick="deleteWebhook(${webhook.id})">Delete</button>
-                        </div>
-                    `;
-                    listElement.appendChild(item);
-                });
-            } catch (error) {
-                listElement.innerHTML = '<p style="color: red;">Error loading webhooks.</p>';
-                console.error('Error rendering webhooks:', error);
+        try {
+            const response = await fetch(`${API_BASE}/webhook-configs`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+            if (response.ok) {
+                document.getElementById('addConfigForm').reset();
+                updateConfigTargetVisibility();
+                toggleAddConfig(false);
+                toast('Endpoint saved', 'success');
+                await renderConfigs();
+            } else {
+                const data = await response.json().catch(() => ({}));
+                toast('Save failed: ' + (data.error || response.statusText), 'error');
             }
+        } catch (err) {
+            toast('Save failed', 'error');
+            console.error(err);
         }
+    });
 
-        document.getElementById('addWebhookForm').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const name = document.getElementById('webhookName').value;
-            const url = document.getElementById('webhookUrl').value;
-            const verification_token = document.getElementById('webhookToken').value || null;
-
-            try {
-                const response = await fetch(`${API_BASE}/webhooks`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name, url, verification_token })
-                });
-
-                if (response.ok) {
-                    document.getElementById('webhookName').value = '';
-                    document.getElementById('webhookUrl').value = '';
-                    document.getElementById('webhookToken').value = '';
-                    await renderWebhooks();
-                } else {
-                    const data = await response.json().catch(() => ({}));
-                    alert('Failed to add webhook: ' + (data.error || response.statusText));
-                }
-            } catch (error) {
-                alert('An error occurred while adding the webhook.');
-                console.error('Error adding webhook:', error);
+    async function toggleConfigStatus(id, newStatus) {
+        try {
+            const response = await fetch(`${API_BASE}/webhook-configs/${id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ is_active: newStatus }),
+            });
+            if (response.ok) {
+                toast(newStatus ? 'Endpoint activated' : 'Endpoint deactivated', 'success');
+                await renderConfigs();
+            } else {
+                const data = await response.json().catch(() => ({}));
+                toast('Update failed: ' + (data.error || response.statusText), 'error');
             }
-        });
+        } catch (err) { toast('Update failed', 'error'); console.error(err); }
+    }
 
-        async function toggleWebhookStatus(id, newStatus) {
-            try {
-                const webhooks = await fetchWebhooks();
-                const webhook = webhooks.find(w => w.id === id);
-                if (!webhook) return;
-
-                const response = await fetch(`${API_BASE}/webhooks/${id}`, {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        name: webhook.name,
-                        url: webhook.url,
-                        is_active: newStatus,
-                        verification_token: webhook.verification_token
-                    })
-                });
-
-                if (response.ok) {
-                    await renderWebhooks();
-                } else {
-                    const data = await response.json().catch(() => ({}));
-                    alert('Failed to update webhook status: ' + (data.error || response.statusText));
-                }
-            } catch (error) {
-                alert('An error occurred while updating the webhook.');
-                console.error('Error updating webhook:', error);
+    async function deleteConfig(id) {
+        if (!confirm('Delete this endpoint?')) return;
+        try {
+            const response = await fetch(`${API_BASE}/webhook-configs/${id}`, { method: 'DELETE' });
+            if (response.status === 204) { toast('Endpoint deleted', 'success'); await renderConfigs(); }
+            else {
+                const data = await response.json().catch(() => ({}));
+                toast('Delete failed: ' + (data.error || response.statusText), 'error');
             }
+        } catch (err) { toast('Delete failed', 'error'); console.error(err); }
+    }
+
+    // ---------- Edit endpoint dialog ----------
+
+    function updateEditConfigTargetVisibility() {
+        const t = document.getElementById('editCfgTargetType').value;
+        document.getElementById('editRawForwardFields').style.display = t === 'raw_forward' ? '' : 'none';
+        document.getElementById('editChatwootApiFields').style.display = t === 'chatwoot_api' ? '' : 'none';
+    }
+    document.getElementById('editCfgTargetType').addEventListener('change', updateEditConfigTargetVisibility);
+
+    function openEditConfig(id) {
+        const cfg = configsCache.find(c => c.id === id);
+        if (!cfg) return toast('Could not load endpoint', 'error');
+        document.getElementById('editCfgId').value = cfg.id;
+        document.getElementById('editCfgName').value = cfg.name || '';
+        document.getElementById('editCfgSlug').value = cfg.slug || '';
+        document.getElementById('editCfgSourceType').value = cfg.source_type || 'uazapi';
+        document.getElementById('editCfgInboundToken').value = cfg.inbound_token || '';
+        document.getElementById('editCfgTargetType').value = cfg.target_type || 'chatwoot_api';
+        document.getElementById('editCfgActive').value = String(Boolean(cfg.is_active));
+        const tc = cfg.target_config || {};
+        document.getElementById('editCfgTargetUrl').value = tc.url || '';
+        document.getElementById('editCfgCwBase').value = tc.base_url || '';
+        document.getElementById('editCfgCwToken').value = tc.api_token || '';
+        document.getElementById('editCfgCwAccount').value = tc.account_id ?? '';
+        document.getElementById('editCfgCwInbox').value = tc.inbox_id ?? '';
+        updateEditConfigTargetVisibility();
+        document.getElementById('editConfigDialog').showModal();
+    }
+
+    function closeEditConfig() {
+        document.getElementById('editConfigDialog').close();
+    }
+
+    document.getElementById('editConfigForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const id = parseInt(document.getElementById('editCfgId').value, 10);
+        const target_type = document.getElementById('editCfgTargetType').value;
+        const body = {
+            name: document.getElementById('editCfgName').value.trim(),
+            slug: document.getElementById('editCfgSlug').value.trim(),
+            source_type: document.getElementById('editCfgSourceType').value,
+            inbound_token: document.getElementById('editCfgInboundToken').value.trim() || null,
+            target_type,
+            is_active: document.getElementById('editCfgActive').value === 'true',
+            target_config: {},
+        };
+        if (target_type === 'raw_forward') {
+            body.target_config = { url: document.getElementById('editCfgTargetUrl').value.trim() };
+        } else {
+            body.target_config = {
+                base_url: document.getElementById('editCfgCwBase').value.trim(),
+                api_token: document.getElementById('editCfgCwToken').value.trim(),
+                account_id: parseInt(document.getElementById('editCfgCwAccount').value, 10),
+            };
+            const inbox = document.getElementById('editCfgCwInbox').value;
+            if (inbox) body.target_config.inbox_id = parseInt(inbox, 10);
         }
-
-        async function deleteWebhook(id) {
-            if (!confirm('Are you sure you want to delete this webhook?')) return;
-
-            try {
-                const response = await fetch(`${API_BASE}/webhooks/${id}`, {
-                    method: 'DELETE'
-                });
-
-                if (response.status === 204) {
-                    await renderWebhooks();
-                } else {
-                    const data = await response.json().catch(() => ({}));
-                    alert('Failed to delete webhook: ' + (data.error || response.statusText));
-                }
-            } catch (error) {
-                alert('An error occurred while deleting the webhook.');
-                console.error('Error deleting webhook:', error);
+        try {
+            const response = await fetch(`${API_BASE}/webhook-configs/${id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+            if (response.ok) {
+                closeEditConfig();
+                toast('Endpoint updated', 'success');
+                await renderConfigs();
+            } else {
+                const data = await response.json().catch(() => ({}));
+                toast('Save failed: ' + (data.error || response.statusText), 'error');
             }
-        }
+        } catch (err) { toast('Save failed', 'error'); console.error(err); }
+    });
 
-        // --- Received Webhook Log Functions ---
+    // ---------- Edit legacy dialog ----------
 
-        async function fetchReceivedLog() {
-            const response = await fetch(`${API_BASE}/received`);
-            return response.json();
-        }
+    function openEditLegacy(id) {
+        const w = legacyCache.find(x => x.id === id);
+        if (!w) return toast('Could not load webhook', 'error');
+        document.getElementById('editWhId').value = w.id;
+        document.getElementById('editWhName').value = w.name || '';
+        document.getElementById('editWhUrl').value = w.url || '';
+        document.getElementById('editWhToken').value = w.verification_token || '';
+        document.getElementById('editWhActive').value = String(Boolean(w.is_active));
+        document.getElementById('editLegacyDialog').showModal();
+    }
 
-        async function renderReceivedLog() {
-            const logElement = document.getElementById('receivedLog');
-            logElement.innerHTML = '';
-            try {
-                const log = await fetchReceivedLog();
-                if (log.length === 0) {
-                    logElement.innerHTML = '<p>No webhooks received yet.</p>';
-                    return;
-                }
+    function closeEditLegacy() {
+        document.getElementById('editLegacyDialog').close();
+    }
 
-                log.forEach(item => {
-                    const logItem = document.createElement('div');
-                    logItem.className = 'log-item';
-                    logItem.innerHTML = `
-                        <p><strong>Received At:</strong> ${new Date(item.received_at).toLocaleString()}</p>
-                        <details>
-                            <summary>View Full Payload</summary>
-                            <pre>${JSON.stringify(item.payload, null, 2)}</pre>
-                        </details>
-                    `;
-                    logElement.appendChild(logItem);
-                });
-            } catch (error) {
-                logElement.innerHTML = '<p style="color: red;">Error loading received log.</p>';
-                console.error('Error rendering received log:', error);
+    document.getElementById('editLegacyForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const id = parseInt(document.getElementById('editWhId').value, 10);
+        const body = {
+            name: document.getElementById('editWhName').value.trim(),
+            url: document.getElementById('editWhUrl').value.trim(),
+            verification_token: document.getElementById('editWhToken').value.trim() || null,
+            is_active: document.getElementById('editWhActive').value === 'true',
+        };
+        try {
+            const response = await fetch(`${API_BASE}/webhooks/${id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+            if (response.ok) {
+                closeEditLegacy();
+                toast('Webhook updated', 'success');
+                await renderWebhooks();
+            } else {
+                const data = await response.json().catch(() => ({}));
+                toast('Save failed: ' + (data.error || response.statusText), 'error');
             }
+        } catch (err) { toast('Save failed', 'error'); console.error(err); }
+    });
+
+    // ---------- Legacy webhooks (configured_webhooks) ----------
+
+    function toggleAddLegacy(forceOpen) {
+        const d = document.getElementById('addLegacyDetails');
+        if (forceOpen === false) { d.open = false; return; }
+        d.open = forceOpen === true ? true : !d.open;
+    }
+
+    async function fetchWebhooks() {
+        const response = await fetch(`${API_BASE}/webhooks`);
+        const data = await response.json();
+        legacyCache = Array.isArray(data) ? data : [];
+        return legacyCache;
+    }
+
+    async function renderWebhooks() {
+        const el = document.getElementById('webhookList');
+        try {
+            const webhooks = await fetchWebhooks();
+            if (!webhooks.length) { el.innerHTML = '<div class="empty">No legacy webhooks configured.</div>'; return; }
+            el.innerHTML = webhooks.map(w => `
+                <div class="row ${w.is_active ? '' : 'row--inactive'}">
+                  <div class="row__main">
+                    <div class="row__title">
+                      <span class="name">${escapeHtml(w.name)}</span>
+                      ${w.is_active ? '<span class="badge badge--active">Active</span>' : '<span class="badge badge--inactive">Inactive</span>'}
+                    </div>
+                    <div class="row__meta">
+                      <span><strong>URL:</strong> <code>${escapeHtml(w.url)}</code></span>
+                      ${w.verification_token ? `<span><strong>Token:</strong> <code>${escapeHtml(maskToken(w.verification_token))}</code></span>` : ''}
+                    </div>
+                  </div>
+                  <div class="row__actions">
+                    <button class="btn btn--sm" onclick="openEditLegacy(${w.id})">Edit</button>
+                    <button class="btn btn--sm" onclick="toggleWebhookStatus(${w.id}, ${!w.is_active})">${w.is_active ? 'Deactivate' : 'Activate'}</button>
+                    <button class="btn btn--sm btn--danger" onclick="deleteWebhook(${w.id})">Delete</button>
+                  </div>
+                </div>`).join('');
+        } catch (err) {
+            el.innerHTML = '<div class="empty">Failed to load webhooks.</div>';
+            console.error(err);
         }
+    }
 
-        // --- Job Status Functions ---
-
-        async function fetchJobStatus() {
-            const response = await fetch(`${API_BASE}/jobs/status`);
-            return response.json();
-        }
-
-        async function renderJobStatus() {
-            const statusElement = document.getElementById('jobStatus');
-            statusElement.innerHTML = '';
-            try {
-                const status = await fetchJobStatus();
-                if (status.length === 0) {
-                    statusElement.innerHTML = '<p>No jobs in the queue yet.</p>';
-                    return;
-                }
-
-                const ul = document.createElement('ul');
-                status.forEach(item => {
-                    const li = document.createElement('li');
-                    li.textContent = `${item.status.toUpperCase()}: ${item.count}`;
-                    ul.appendChild(li);
-                });
-                statusElement.appendChild(ul);
-            } catch (error) {
-                statusElement.innerHTML = '<p style="color: red;">Error loading job status.</p>';
-                console.error('Error rendering job status:', error);
+    document.getElementById('addWebhookForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const name = document.getElementById('webhookName').value.trim();
+        const url = document.getElementById('webhookUrl').value.trim();
+        const verification_token = document.getElementById('webhookToken').value.trim() || null;
+        try {
+            const response = await fetch(`${API_BASE}/webhooks`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, url, verification_token })
+            });
+            if (response.ok) {
+                document.getElementById('addWebhookForm').reset();
+                toggleAddLegacy(false);
+                toast('Legacy webhook saved', 'success');
+                await renderWebhooks();
+            } else {
+                const data = await response.json().catch(() => ({}));
+                toast('Save failed: ' + (data.error || response.statusText), 'error');
             }
+        } catch (err) { toast('Save failed', 'error'); console.error(err); }
+    });
+
+    async function toggleWebhookStatus(id, newStatus) {
+        try {
+            const webhooks = await fetchWebhooks();
+            const webhook = webhooks.find(w => w.id === id);
+            if (!webhook) return;
+            const response = await fetch(`${API_BASE}/webhooks/${id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: webhook.name, url: webhook.url, is_active: newStatus, verification_token: webhook.verification_token })
+            });
+            if (response.ok) { toast(newStatus ? 'Activated' : 'Deactivated', 'success'); await renderWebhooks(); }
+            else {
+                const data = await response.json().catch(() => ({}));
+                toast('Update failed: ' + (data.error || response.statusText), 'error');
+            }
+        } catch (err) { toast('Update failed', 'error'); console.error(err); }
+    }
+
+    async function deleteWebhook(id) {
+        if (!confirm('Delete this webhook?')) return;
+        try {
+            const response = await fetch(`${API_BASE}/webhooks/${id}`, { method: 'DELETE' });
+            if (response.status === 204) { toast('Deleted', 'success'); await renderWebhooks(); }
+            else {
+                const data = await response.json().catch(() => ({}));
+                toast('Delete failed: ' + (data.error || response.statusText), 'error');
+            }
+        } catch (err) { toast('Delete failed', 'error'); console.error(err); }
+    }
+
+    // ---------- Jobs ----------
+
+    async function fetchJobStatus() {
+        const response = await fetch(`${API_BASE}/jobs/status`);
+        return response.json();
+    }
+
+    async function renderJobStatus() {
+        const el = document.getElementById('jobStatus');
+        try {
+            const status = await fetchJobStatus();
+            if (!Array.isArray(status) || !status.length) {
+                el.innerHTML = '<div class="empty" style="grid-column: 1/-1">No jobs in the queue yet.</div>';
+                document.getElementById('statPending').textContent = '0';
+                document.getElementById('statFailed').textContent = '0';
+                return;
+            }
+            const byStatus = Object.fromEntries(status.map(s => [s.status, Number(s.count)]));
+            const pending = (byStatus.pending || 0) + (byStatus.processing || 0);
+            document.getElementById('statPending').textContent = pending;
+            document.getElementById('statPendingSub').textContent = (byStatus.processing || 0) + ' processing';
+            document.getElementById('statFailed').textContent = byStatus.failed || 0;
+            document.getElementById('statFailedSub').textContent = (byStatus.success || 0) + ' succeeded';
+
+            const order = ['pending', 'processing', 'success', 'failed'];
+            const cards = order
+                .filter(k => byStatus[k] !== undefined)
+                .map(k => `
+                  <div class="stat">
+                    <div class="stat__label">${k}</div>
+                    <div class="stat__value"><span class="badge badge--${k}">${escapeHtml(k)}</span> ${byStatus[k].toLocaleString()}</div>
+                  </div>`);
+            const others = status.filter(s => !order.includes(s.status)).map(s => `
+                  <div class="stat">
+                    <div class="stat__label">${escapeHtml(s.status)}</div>
+                    <div class="stat__value">${Number(s.count).toLocaleString()}</div>
+                  </div>`);
+            el.innerHTML = [...cards, ...others].join('') || '<div class="empty" style="grid-column:1/-1">No jobs.</div>';
+        } catch (err) {
+            el.innerHTML = '<div class="empty" style="grid-column:1/-1">Failed to load job stats.</div>';
+            console.error(err);
         }
+    }
 
-        // --- Initialization ---
+    // ---------- Received log ----------
 
-        function init() {
-            renderWebhooks();
-            renderJobStatus();
-            renderReceivedLog();
-            setInterval(() => {
-                renderJobStatus();
-                renderReceivedLog();
-            }, 10000);
+    async function fetchReceivedLog() {
+        const response = await fetch(`${API_BASE}/received?limit=20`);
+        return response.json();
+    }
+
+    function payloadPreview(payload) {
+        try {
+            if (payload?.message?.messageType) return `message.${payload.message.messageType} · ${payload.message.chatid || ''}`;
+            if (payload?.entry?.[0]?.changes?.[0]?.value?.messages?.[0]?.type)
+                return `meta.${payload.entry[0].changes[0].value.messages[0].type} · from ${payload.entry[0].changes[0].value.messages[0].from}`;
+            if (payload?.entry?.[0]?.changes?.[0]?.value?.statuses?.[0]?.status)
+                return `meta.status.${payload.entry[0].changes[0].value.statuses[0].status}`;
+            if (payload?.chat?.wa_chatid) return `chat.update · ${payload.chat.wa_chatid}`;
+            const s = JSON.stringify(payload);
+            return s.length > 160 ? s.slice(0, 160) + '…' : s;
+        } catch { return ''; }
+    }
+
+    function countRecent(items, sinceMs) {
+        const cutoff = Date.now() - sinceMs;
+        return items.filter(i => new Date(i.received_at).getTime() >= cutoff).length;
+    }
+
+    async function renderReceivedLog() {
+        const el = document.getElementById('receivedLog');
+        try {
+            const result = await fetchReceivedLog();
+            const items = Array.isArray(result) ? result : (result.data || []);
+            const total = typeof result.total === 'number' ? result.total : null;
+            if (!items.length) { el.innerHTML = '<div class="empty">No webhooks received yet.</div>'; return; }
+
+            // Stats
+            const recent24h = countRecent(items, 24 * 60 * 60 * 1000);
+            document.getElementById('statReceived').textContent = total !== null ? total.toLocaleString() : '—';
+            document.getElementById('statReceivedSub').textContent = `${recent24h}+ in the shown window`;
+
+            el.innerHTML = items.map(item => {
+                const dt = new Date(item.received_at);
+                const pretty = dt.toLocaleString();
+                return `
+                  <details class="log-item">
+                    <summary>
+                      <span class="left">
+                        <span class="time">${escapeHtml(pretty)}</span>
+                        <span class="preview">${escapeHtml(payloadPreview(item.payload))}</span>
+                      </span>
+                      <span class="badge badge--plain">#${item.id}</span>
+                    </summary>
+                    <pre>${escapeHtml(JSON.stringify(item.payload, null, 2))}</pre>
+                  </details>`;
+            }).join('');
+        } catch (err) {
+            el.innerHTML = '<div class="empty">Failed to load log.</div>';
+            console.error(err);
         }
+    }
 
-        window.onload = init;
-    </script>
+    // ---------- Init ----------
+
+    function init() {
+        const hash = (window.location.hash || '#endpoints').replace('#', '');
+        activateTab(hash);
+
+        updateConfigTargetVisibility();
+        renderConfigs();
+        renderWebhooks();
+        renderJobStatus();
+        renderReceivedLog();
+
+        setInterval(() => { renderJobStatus(); renderReceivedLog(); }, 10000);
+    }
+
+    window.addEventListener('load', init);
+</script>
 </body>
 </html>

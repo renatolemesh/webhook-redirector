@@ -24,9 +24,9 @@ pool.on('error', (err) => {
   process.exit(-1);
 });
 
-export const initDb = async () => {
+const runInitDb = async () => {
+  const client = await pool.connect();
   try {
-    const client = await pool.connect();
     await client.query(`
       CREATE TABLE IF NOT EXISTS configured_webhooks (
         id SERIAL PRIMARY KEY,
@@ -207,10 +207,43 @@ export const initDb = async () => {
       WHERE NOT EXISTS (SELECT 1 FROM webhook_configs)
         AND EXISTS (SELECT 1 FROM configured_webhooks);
     `);
+  } finally {
+    // release em finally: antes ficava depois do query e, quando o query
+    // falhava, o client vazava do pool (max: 20).
     client.release();
-    console.log('Database tables initialized successfully.');
-  } catch (error) {
-    console.error('Error initializing database:', error);
+  }
+};
+
+const INIT_DB_MAX_WAIT_MS = 60000;
+const INIT_DB_RETRY_MS = 2000;
+
+/**
+ * Espera o banco aceitar conexao antes de aplicar o schema.
+ *
+ * A pg-central vive em outro projeto compose, entao nao ha depends_on que
+ * ordene a subida: no reboot do servidor os dois containers arrancam no mesmo
+ * segundo e o Postgres ainda esta em "starting up" quando chegamos aqui. Antes
+ * de 2026-09-09 o initDb apenas logava o erro e seguia, o que fazia o boot
+ * continuar com as migracoes nao aplicadas.
+ */
+export const initDb = async () => {
+  const deadline = Date.now() + INIT_DB_MAX_WAIT_MS;
+
+  for (;;) {
+    try {
+      await runInitDb();
+      console.log('Database tables initialized successfully.');
+      return;
+    } catch (error: any) {
+      if (Date.now() >= deadline) {
+        console.error('Error initializing database (desistindo apos espera):', error);
+        return;
+      }
+      console.warn(
+        `Banco ainda nao disponivel (${error?.message || error}), nova tentativa em ${INIT_DB_RETRY_MS}ms...`
+      );
+      await new Promise((resolve) => setTimeout(resolve, INIT_DB_RETRY_MS));
+    }
   }
 };
 

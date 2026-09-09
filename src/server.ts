@@ -137,9 +137,15 @@ const startServer = async () => {
       CREATE INDEX IF NOT EXISTS "IDX_session_expire" ON "session" ("expire");
     `).catch(() => console.log('Session table likely exists'));
 
-    // Start both workers
-    startWorker();
-    startChatwootWorker();
+    // Start both workers. O .catch e a ultima rede de protecao: o handler
+    // global de unhandledRejection so loga, entao uma rejeicao aqui deixaria
+    // o processo vivo servindo HTTP com o worker morto e sem nada gritando.
+    startWorker().catch((err) => {
+      console.error('CRITICAL: webhook job worker failed to start:', err);
+    });
+    startChatwootWorker().catch((err) => {
+      console.error('CRITICAL: Chatwoot message worker failed to start:', err);
+    });
     
     app.listen(PORT, '0.0.0.0', () => {
       console.log(`✓ Server is running on port ${PORT}`);

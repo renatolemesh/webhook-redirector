@@ -153,9 +153,26 @@ const workerLoop = async () => {
   }
 };
 
+const safeLoadWebhookCache = async () => {
+  try {
+    await loadWebhookCache();
+  } catch (error: any) {
+    console.error('Failed to load webhook cache:', error?.message || error);
+  }
+};
+
 export const startWorker = async () => {
   console.log('Starting webhook job worker...');
-  await loadWebhookCache();
-  setInterval(loadWebhookCache, 60000);
+  // O loop TEM que arrancar mesmo que o banco ainda nao esteja de pe. Ate
+  // 2026-09-09 este await era desprotegido: no reboot de 07/09 a pg-central
+  // subiu no mesmo segundo que a API, o loadWebhookCache rejeitou com
+  // ECONNREFUSED e o workerLoop() abaixo nunca chegou a ser chamado. Como o
+  // server.ts tem um handler de unhandledRejection que so loga, o processo
+  // seguiu vivo servindo HTTP com o worker morto por 43h e 4209 jobs
+  // empilharam sem uma unica tentativa.
+  // O proprio workerLoop recarrega o cache quando ele esta vazio e se
+  // reagenda no finally, entao ele se recupera sozinho quando o banco volta.
+  await safeLoadWebhookCache();
+  setInterval(safeLoadWebhookCache, 60000);
   workerLoop();
 };

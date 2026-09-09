@@ -38,7 +38,7 @@ services:
       CHATWOOT_BASE_URL: ${CHATWOOT_BASE_URL}
       CHATWOOT_API_TOKEN: ${CHATWOOT_API_TOKEN}
       # Database Connection Variables (must match the 'db' service)
-      DB_HOST: db
+      DB_HOST: pg-central
       DB_PORT: 5432
       DB_USER: ${DB_USER}
       DB_PASSWORD: ${DB_PASSWORD}
@@ -47,9 +47,8 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD}
     volumes:
     - ./docker_data/debug:/app/debug
-    depends_on:
-      db:
-        condition: service_healthy # Wait for the database to be ready
+    # depends_on do banco local removido na Fase 1 (2026-08): a base agora
+    # vive na pg-central, que tem healthcheck proprio.
     networks:
       - shared-net
 
@@ -66,8 +65,6 @@ services:
       - ./docker_data/pgadmin:/var/lib/pgadmin
     networks:
       - shared-net
-    depends_on:
-      - db
 
 networks:
   shared-net:

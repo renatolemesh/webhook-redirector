@@ -27,6 +27,18 @@ export const dispatchWebhook = async (
     console.error(`[dispatch:${config.slug}] saveReceivedWebhook failed:`, error);
   }
 
+  return routeToTarget(config, payload);
+};
+
+/**
+ * Despacha sem gravar em received_webhooks. Para quem ja auditou o payload
+ * original uma vez e agora entrega uma parte dele a cada endpoint (ingress
+ * multi-tenant da Meta em /webhook/app/:appId).
+ */
+export const routeToTarget = async (
+  config: WebhookConfig,
+  payload: any
+): Promise<{ handled: boolean; reason?: string }> => {
   if (config.target_type === 'raw_forward') {
     return dispatchRawForward(config, payload);
   }

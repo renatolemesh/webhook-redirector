@@ -7,6 +7,8 @@ import webhookConfigRouter from './routes/webhookConfigRouter';
 import webhookConfigsRouter from './routes/webhookConfigsRouter';
 import dynamicWebhookRouter from './routes/dynamicWebhookRouter';
 import chatwootMessageRouter from './routes/chatwootMessageRouter';
+import metaWebhookRouter from './routes/metaWebhookRouter';
+import metaAdminRouter from './routes/metaAdminRouter';
 import pool, { initDb } from './config/database';
 import { forwardWebhook } from './services/forwarderService';
 import { startWorker } from './services/jobWorker';
@@ -27,8 +29,13 @@ process.on('unhandledRejection', (reason) => {
   console.error('UNHANDLED REJECTION:', reason);
 });
 
-// 1. Middleware to parse JSON bodies
-app.use(express.json());
+// 1. Middleware to parse JSON bodies. Guarda tambem o corpo cru: a assinatura
+// X-Hub-Signature-256 da Meta e calculada sobre os bytes originais.
+app.use(express.json({
+  verify: (req, _res, buf) => {
+    Object.assign(req, { rawBody: buf });
+  },
+}));
 
 // 2. Session Configuration
 app.use(session({
@@ -102,6 +109,11 @@ app.get('/', requireLogin, (req: Request, res: Response) => {
 // Chatwoot message API (token auth is handled inside the router)
 app.use('/api/chatwoot', chatwootMessageRouter);
 
+// Multi-tenant Meta ingress (public; signature checked against the app's secret).
+// Mounted before the per-slug router, which would otherwise never see /app/<id>
+// anyway (a :slug param doesn't span slashes) — the order just makes it explicit.
+app.use('/webhook/app', metaWebhookRouter);
+
 // Dynamic per-slug webhook endpoint (public; each config enforces its own token).
 // Covers both the raw_forward and chatwoot_api target types.
 app.use('/webhook', dynamicWebhookRouter);
@@ -110,6 +122,7 @@ app.use('/webhook', dynamicWebhookRouter);
 // Both require session login.
 app.use('/api', requireLogin, webhookConfigRouter);
 app.use('/api', requireLogin, webhookConfigsRouter);
+app.use('/api', requireLogin, metaAdminRouter);
 
 
 // --- START SERVER ---

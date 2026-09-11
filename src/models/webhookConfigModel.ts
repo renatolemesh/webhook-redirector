@@ -27,6 +27,7 @@ export interface WebhookConfig {
   target_type: TargetType;
   target_config: TargetConfig;
   is_active: boolean;
+  meta_channel_id: number | null;
   created_at: Date;
 }
 
@@ -65,6 +66,7 @@ export interface WebhookConfigInput {
   target_type: TargetType;
   target_config: TargetConfig;
   is_active?: boolean;
+  meta_channel_id?: number | null;
 }
 
 export const createWebhookConfig = async (
@@ -72,8 +74,8 @@ export const createWebhookConfig = async (
 ): Promise<WebhookConfig> => {
   const res = await pool.query(
     `INSERT INTO webhook_configs
-       (name, slug, source_type, source_config, inbound_token, target_type, target_config, is_active)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, TRUE))
+       (name, slug, source_type, source_config, inbound_token, target_type, target_config, is_active, meta_channel_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, TRUE), $9)
      RETURNING *`,
     [
       input.name,
@@ -84,6 +86,7 @@ export const createWebhookConfig = async (
       input.target_type,
       input.target_config,
       input.is_active,
+      input.meta_channel_id ?? null,
     ]
   );
   return res.rows[0];
@@ -106,13 +109,16 @@ export const updateWebhookConfig = async (
     target_type: input.target_type ?? existing.target_type,
     target_config: input.target_config ?? existing.target_config,
     is_active: input.is_active ?? existing.is_active,
+    meta_channel_id:
+      input.meta_channel_id === undefined ? existing.meta_channel_id : input.meta_channel_id,
   };
 
   const res = await pool.query(
     `UPDATE webhook_configs
        SET name = $1, slug = $2, source_type = $3, source_config = $4,
-           inbound_token = $5, target_type = $6, target_config = $7, is_active = $8
-     WHERE id = $9
+           inbound_token = $5, target_type = $6, target_config = $7, is_active = $8,
+           meta_channel_id = $9
+     WHERE id = $10
      RETURNING *`,
     [
       merged.name,
@@ -123,6 +129,7 @@ export const updateWebhookConfig = async (
       merged.target_type,
       merged.target_config,
       merged.is_active,
+      merged.meta_channel_id,
       id,
     ]
   );

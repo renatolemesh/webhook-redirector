@@ -189,6 +189,54 @@ const runInitDb = async () => {
       CREATE INDEX IF NOT EXISTS idx_received_webhooks_slug
         ON received_webhooks(slug);
 
+      -- Multi-tenant Meta. Um meta_app e um App da Meta com URL de callback
+      -- propria (/webhook/app/<app_id>); cada meta_channel e um numero de
+      -- WhatsApp, conta de Instagram ou pagina do Messenger ligado a ele. O
+      -- roteamento sai do payload (entry[].id, metadata.phone_number_id), nao
+      -- da URL: a Meta manda todos os clientes de um app para o mesmo lugar.
+      CREATE TABLE IF NOT EXISTS meta_apps (
+        id            SERIAL PRIMARY KEY,
+        name          VARCHAR(255) NOT NULL,
+        app_id        VARCHAR(64)  NOT NULL UNIQUE,
+        app_secret    TEXT         NOT NULL,
+        verify_token  VARCHAR(255) NOT NULL,
+        is_active     BOOLEAN      NOT NULL DEFAULT TRUE,
+        created_at    TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS meta_channels (
+        id               SERIAL PRIMARY KEY,
+        meta_app_id      INTEGER      NOT NULL REFERENCES meta_apps(id) ON DELETE CASCADE,
+        name             VARCHAR(255) NOT NULL,
+        product          VARCHAR(16)  NOT NULL,
+        external_id      VARCHAR(64)  NOT NULL,
+        phone_number_id  VARCHAR(64),
+        is_active        BOOLEAN      NOT NULL DEFAULT TRUE,
+        created_at       TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      );
+
+      -- COALESCE porque o UNIQUE trata NULLs como distintos e deixaria
+      -- cadastrar o mesmo WABA inteiro duas vezes.
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_meta_channels_target
+        ON meta_channels(meta_app_id, product, external_id, COALESCE(phone_number_id, ''));
+
+      -- Endpoint pendurado num canal. Varios endpoints no mesmo canal = fan-out
+      -- (Chatwoot + n8n + sistema do cliente), como o /webhook legado faz hoje.
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_name = 'webhook_configs'
+            AND column_name = 'meta_channel_id'
+        ) THEN
+          ALTER TABLE webhook_configs
+            ADD COLUMN meta_channel_id INTEGER REFERENCES meta_channels(id) ON DELETE SET NULL;
+        END IF;
+      END $$;
+
+      CREATE INDEX IF NOT EXISTS idx_webhook_configs_meta_channel
+        ON webhook_configs(meta_channel_id);
+
       -- One-shot seed: if webhook_configs is empty and configured_webhooks has rows,
       -- copy every row over as meta_cloud_api + raw_forward. Both tables coexist;
       -- rollback = revert code, configured_webhooks is still authoritative for the legacy flow.

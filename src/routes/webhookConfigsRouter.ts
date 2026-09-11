@@ -37,10 +37,17 @@ const validateInput = (body: any): string | null => {
   if (body.source_config !== undefined && typeof body.source_config !== 'object')
     return 'source_config must be an object';
 
+  return validateMetaChannelId(body);
+};
+
+const validateMetaChannelId = (body: any): string | null => {
+  const v = body.meta_channel_id;
+  if (v === undefined || v === null) return null;
+  if (!Number.isInteger(v) || v <= 0) return 'meta_channel_id must be a positive integer or null';
   return null;
 };
 
-const toInput = (body: any): WebhookConfigInput => ({
+const toCreateInput = (body: any): WebhookConfigInput => ({
   name: body.name,
   slug: body.slug,
   source_type: body.source_type,
@@ -49,7 +56,33 @@ const toInput = (body: any): WebhookConfigInput => ({
   target_type: body.target_type,
   target_config: body.target_config,
   is_active: body.is_active !== undefined ? Boolean(body.is_active) : undefined,
+  meta_channel_id: body.meta_channel_id ?? null,
 });
+
+// O PUT so repassa as chaves que vieram no body. O toggle do dashboard manda
+// apenas { is_active }, e antes os defaults do create (inbound_token ?? null,
+// source_config || {}) entravam no update: cada ativar/desativar apagava o
+// token de entrada e o source_config do endpoint.
+const UPDATABLE_KEYS: (keyof WebhookConfigInput)[] = [
+  'name',
+  'slug',
+  'source_type',
+  'source_config',
+  'inbound_token',
+  'target_type',
+  'target_config',
+  'is_active',
+  'meta_channel_id',
+];
+
+const toUpdateInput = (body: any): Partial<WebhookConfigInput> => {
+  const input: Record<string, unknown> = {};
+  for (const key of UPDATABLE_KEYS) {
+    if (body[key] !== undefined) input[key] = body[key];
+  }
+  if (input.is_active !== undefined) input.is_active = Boolean(input.is_active);
+  return input as Partial<WebhookConfigInput>;
+};
 
 router.get('/webhook-configs', async (_req: Request, res: Response) => {
   try {
@@ -66,12 +99,15 @@ router.post('/webhook-configs', async (req: Request, res: Response) => {
   if (err) return res.status(400).json({ error: err });
 
   try {
-    const created = await createWebhookConfig(toInput(req.body));
+    const created = await createWebhookConfig(toCreateInput(req.body));
     res.status(201).json(created);
   } catch (error: any) {
     console.error('Error creating webhook_config:', error);
     if (error?.code === '23505') {
       return res.status(409).json({ error: 'slug already exists' });
+    }
+    if (error?.code === '23503') {
+      return res.status(400).json({ error: 'meta_channel_id does not exist' });
     }
     res.status(500).json({ error: 'Failed to create webhook config' });
   }
@@ -86,15 +122,20 @@ router.put('/webhook-configs/:id', async (req: Request, res: Response) => {
     const err = validateInput({ ...req.body });
     if (err) return res.status(400).json({ error: err });
   }
+  const channelErr = validateMetaChannelId(req.body);
+  if (channelErr) return res.status(400).json({ error: channelErr });
 
   try {
-    const updated = await updateWebhookConfig(id, toInput(req.body));
+    const updated = await updateWebhookConfig(id, toUpdateInput(req.body));
     if (!updated) return res.status(404).json({ error: 'Not found' });
     res.json(updated);
   } catch (error: any) {
     console.error('Error updating webhook_config:', error);
     if (error?.code === '23505') {
       return res.status(409).json({ error: 'slug already exists' });
+    }
+    if (error?.code === '23503') {
+      return res.status(400).json({ error: 'meta_channel_id does not exist' });
     }
     res.status(500).json({ error: 'Failed to update webhook config' });
   }

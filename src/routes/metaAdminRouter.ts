@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import crypto from 'crypto';
+import { DEFAULT_GRAPH_VERSION } from '../services/metaGraph';
 import {
   META_PRODUCTS,
   MetaApp,
@@ -46,6 +47,8 @@ const validateApp = (a: MetaAppInput): string | null => {
   if (!isNonEmpty(a.app_secret)) return 'app_secret is required';
   if (!isNonEmpty(a.verify_token) || a.verify_token.length < 16)
     return 'verify_token must have at least 16 characters';
+  if (a.config_id !== null && !isDigits(a.config_id)) return 'config_id must be numeric, as a string';
+  if (!/^v\d+\.\d+$/.test(a.graph_api_version)) return 'graph_api_version must look like v22.0';
   return null;
 };
 
@@ -66,6 +69,8 @@ router.post('/meta/apps', async (req: Request, res: Response) => {
     app_id: body.app_id,
     app_secret: body.app_secret,
     verify_token: body.verify_token || crypto.randomBytes(24).toString('hex'),
+    config_id: body.config_id || null,
+    graph_api_version: body.graph_api_version || DEFAULT_GRAPH_VERSION,
     is_active: body.is_active !== undefined ? Boolean(body.is_active) : true,
   };
   const err = validateApp(input);
@@ -95,6 +100,8 @@ router.put('/meta/apps/:id', async (req: Request, res: Response) => {
       // formulario de edicao nao tem como reenvia-lo.
       app_secret: isNonEmpty(body.app_secret) ? body.app_secret : existing.app_secret,
       verify_token: body.verify_token ?? existing.verify_token,
+      config_id: body.config_id !== undefined ? body.config_id || null : existing.config_id,
+      graph_api_version: body.graph_api_version || existing.graph_api_version,
       is_active: body.is_active !== undefined ? Boolean(body.is_active) : existing.is_active,
     };
     const err = validateApp(input);

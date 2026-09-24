@@ -237,6 +237,44 @@ const runInitDb = async () => {
       CREATE INDEX IF NOT EXISTS idx_webhook_configs_meta_channel
         ON webhook_configs(meta_channel_id);
 
+      -- Fase 2 (OAuth): o que o onboarding precisa guardar.
+      DO $$
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name = 'meta_apps' AND column_name = 'config_id') THEN
+          ALTER TABLE meta_apps ADD COLUMN config_id VARCHAR(64);
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name = 'meta_apps' AND column_name = 'graph_api_version') THEN
+          ALTER TABLE meta_apps ADD COLUMN graph_api_version VARCHAR(16) NOT NULL DEFAULT 'v22.0';
+        END IF;
+
+        -- Token do cliente e estado do callback ficam no canal.
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name = 'meta_channels' AND column_name = 'access_token') THEN
+          ALTER TABLE meta_channels ADD COLUMN access_token TEXT;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name = 'meta_channels' AND column_name = 'token_expires_at') THEN
+          ALTER TABLE meta_channels ADD COLUMN token_expires_at TIMESTAMP WITH TIME ZONE;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name = 'meta_channels' AND column_name = 'display_name') THEN
+          ALTER TABLE meta_channels ADD COLUMN display_name VARCHAR(255);
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name = 'meta_channels' AND column_name = 'callback_status') THEN
+          ALTER TABLE meta_channels ADD COLUMN callback_status VARCHAR(32);
+          ALTER TABLE meta_channels ADD COLUMN callback_observed TEXT;
+          ALTER TABLE meta_channels ADD COLUMN callback_checked_at TIMESTAMP WITH TIME ZONE;
+          ALTER TABLE meta_channels ADD COLUMN callback_error TEXT;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name = 'meta_channels' AND column_name = 'inbox_ref') THEN
+          ALTER TABLE meta_channels ADD COLUMN inbox_ref VARCHAR(64);
+        END IF;
+      END $$;
+
       -- One-shot seed: if webhook_configs is empty and configured_webhooks has rows,
       -- copy every row over as meta_cloud_api + raw_forward. Both tables coexist;
       -- rollback = revert code, configured_webhooks is still authoritative for the legacy flow.

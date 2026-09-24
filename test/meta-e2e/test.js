@@ -9,6 +9,9 @@ const ok = (cond, msg) => { console.log(`${cond ? 'PASS' : 'FAIL'}  ${msg}`); co
 // o repasse (legado inclusive) nunca preservou a ordem. Compara conteudo.
 const canon = (v) => JSON.stringify(v, (k, x) => (x && typeof x === 'object' && !Array.isArray(x) ? Object.fromEntries(Object.entries(x).sort(([a], [b]) => (a < b ? -1 : 1))) : x));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// O /dump do duplo devolve { deliveries, graph, inboxes, state }; aqui so
+// interessam os repasses que chegaram ao sink.
+const fetchDeliveries = async () => ((await (await fetch(SINK + '/dump')).json()).deliveries) || [];
 let cookie = '';
 
 async function api(method, path, body) {
@@ -146,12 +149,12 @@ const sendMeta = (p, o) => sendRaw(JSON.stringify(p), o);
   const total = Object.values(expected).reduce((n, l) => n + l.length, 0);
   let dump = [];
   for (let i = 0; i < 40; i++) {
-    dump = await (await fetch(SINK + '/dump')).json();
+    dump = await fetchDeliveries();
     if (dump.length >= total) break;
     await sleep(1000);
   }
   await sleep(7000); // janela para aparecer entrega a mais (duplicada ou para inativo)
-  dump = await (await fetch(SINK + '/dump')).json();
+  dump = await fetchDeliveries();
   for (const [slug, list] of Object.entries(expected)) {
     const got = dump.filter((d) => d.path === '/' + slug).map((d) => canon(d.body)).sort();
     const want = list.map((p) => canon(p)).sort();

@@ -50,11 +50,19 @@ docker run -d --name wr-meta-app --network "$NET" --memory 256m -v "$REPO":/app 
   -e PORT=3005 -e DB_HOST=wr-meta-test-db -e DB_PORT=5432 -e DB_USER=app -e DB_PASSWORD=test \
   -e DB_NAME=webhook -e VERIFY_TOKEN=test-verify-token -e ADMIN_USERNAME=admin \
   -e ADMIN_PASSWORD=admin -e SESSION_SECRET=test-session \
+  -e PUBLIC_BASE_URL=https://wr-teste.local \
+  -e META_GRAPH_BASE=http://wr-meta-sink:4000 \
+  -e META_IG_GRAPH_BASE=http://wr-meta-sink:4000 \
+  -e META_IG_OAUTH_BASE=http://wr-meta-sink:4000 \
+  -e META_CALLBACK_WATCHDOG=0 \
   node:20-alpine node dist/server.js >/dev/null
 
-if ! docker run --rm -i --network "$NET" --memory 128m node:20-alpine \
-     sh -c 'cat > /test.js && node /test.js' < "$HERE/test.js"; then
-  echo '--- log do app'
-  docker logs wr-meta-app 2>&1 | tail -40
-  exit 1
-fi
+for suite in test.js test-onboarding.js; do
+  echo "=== $suite"
+  if ! docker run --rm -i --network "$NET" --memory 128m node:20-alpine \
+       sh -c "cat > /$suite && node /$suite" < "$HERE/$suite"; then
+    echo '--- log do app'
+    docker logs wr-meta-app 2>&1 | tail -40
+    exit 1
+  fi
+done

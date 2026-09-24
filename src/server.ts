@@ -9,10 +9,12 @@ import dynamicWebhookRouter from './routes/dynamicWebhookRouter';
 import chatwootMessageRouter from './routes/chatwootMessageRouter';
 import metaWebhookRouter from './routes/metaWebhookRouter';
 import metaAdminRouter from './routes/metaAdminRouter';
+import metaOAuthRouter from './routes/metaOAuthRouter';
 import pool, { initDb } from './config/database';
 import { forwardWebhook } from './services/forwarderService';
 import { startWorker } from './services/jobWorker';
 import { startChatwootWorker } from './services/chatwootWorker';
+import { startCallbackWatchdog } from './services/callbackWatchdog';
 import { requireLogin } from './middleware/auth';
 
 dotenv.config();
@@ -123,6 +125,9 @@ app.use('/webhook', dynamicWebhookRouter);
 app.use('/api', requireLogin, webhookConfigRouter);
 app.use('/api', requireLogin, webhookConfigsRouter);
 app.use('/api', requireLogin, metaAdminRouter);
+// Onboarding: cada rota declara a propria autenticacao, porque o status do
+// callback tambem e lido por token (vigia-infra), nao so pela sessao.
+app.use('/api', metaOAuthRouter);
 
 
 // --- START SERVER ---
@@ -158,6 +163,9 @@ const startServer = async () => {
     });
     startChatwootWorker().catch((err) => {
       console.error('CRITICAL: Chatwoot message worker failed to start:', err);
+    });
+    startCallbackWatchdog().catch((err) => {
+      console.error('CRITICAL: Meta callback watchdog failed to start:', err);
     });
     
     app.listen(PORT, '0.0.0.0', () => {

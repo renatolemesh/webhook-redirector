@@ -61,7 +61,16 @@ app.post('/auth/login', (req: Request, res: Response) => {
   if (username === process.env.ADMIN_USERNAME && password === process.env.ADMIN_PASSWORD) {
     // @ts-ignore
     req.session.user = username;
-    res.status(200).json({ success: true });
+    // Espera o store gravar antes de responder. Sem isto a sessao e salva
+    // depois da resposta, e a primeira requisicao do painel pode chegar antes
+    // do INSERT: o usuario faz login e e devolvido para a tela de login.
+    req.session.save((err) => {
+      if (err) {
+        console.error('Falha ao gravar a sessao no login:', err);
+        return res.status(500).json({ error: 'Session error' });
+      }
+      res.status(200).json({ success: true });
+    });
   } else {
     res.status(401).json({ error: 'Invalid credentials' });
   }

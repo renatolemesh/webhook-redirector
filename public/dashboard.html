@@ -20,6 +20,7 @@
                 <a href="#legacy" data-tab="legacy">Legacy</a>
                 <a href="#jobs" data-tab="jobs">Jobs</a>
                 <a href="#received" data-tab="received">Received</a>
+                <a href="#meta" data-tab="meta">Meta</a>
             </nav>
             <div class="topbar__spacer"></div>
             <button class="btn btn--ghost btn--sm" onclick="logout()">Sign out</button>
@@ -219,8 +220,124 @@
             </div>
         </section>
 
+        <!-- META -->
+        <section id="tab-meta" class="tab-pane hide">
+            <div class="card">
+                <div class="card__header">
+                    <div>
+                        <h2>Apps da Meta</h2>
+                        <div class="subtitle">Um app por conta de desenvolvedor. A URL de callback e o verify token v&atilde;o no painel da Meta.</div>
+                    </div>
+                    <button class="btn btn--primary btn--sm" onclick="toggleAddApp()">+ Novo app</button>
+                </div>
+
+                <details class="collapsible" id="addAppDetails">
+                    <summary style="display:none"></summary>
+                    <div class="body">
+                        <div class="callout" style="margin-bottom:16px">
+                            <strong>WhatsApp:</strong> o callback &eacute; por WABA e quem aponta &eacute; o bot&atilde;o <em>Conectar WhatsApp</em>.
+                            <strong>Instagram e Messenger:</strong> o callback &eacute; do app &mdash; cole a URL que aparece abaixo no painel da Meta, uma vez s&oacute;.
+                        </div>
+                        <form id="addAppForm">
+                            <div class="form-grid">
+                                <div class="field">
+                                    <label for="appName">Nome</label>
+                                    <input type="text" id="appName" required placeholder="App Synapsea">
+                                </div>
+                                <div class="field">
+                                    <label for="appAppId">App ID</label>
+                                    <input type="text" id="appAppId" required inputmode="numeric" placeholder="1234567890123456">
+                                </div>
+                                <div class="field">
+                                    <label for="appSecret">App Secret</label>
+                                    <input type="password" id="appSecret" required autocomplete="off">
+                                    <span class="hint">Usado para validar a assinatura. Nunca volta para a tela.</span>
+                                </div>
+                                <div class="field">
+                                    <label for="appConfigId">Configuration ID</label>
+                                    <input type="text" id="appConfigId" inputmode="numeric" placeholder="(Embedded Signup do WhatsApp)">
+                                </div>
+                                <div class="field">
+                                    <label for="appVersion">Vers&atilde;o da Graph</label>
+                                    <input type="text" id="appVersion" value="v22.0" pattern="v\d+\.\d+">
+                                </div>
+                            </div>
+                            <div class="btn-group" style="margin-top:8px">
+                                <button class="btn btn--primary" type="submit">Salvar app</button>
+                                <button class="btn" type="button" onclick="toggleAddApp(false)">Cancelar</button>
+                            </div>
+                        </form>
+                    </div>
+                </details>
+
+                <div id="metaAppList"><div class="empty">Carregando apps&hellip;</div></div>
+            </div>
+
+            <div class="card">
+                <div class="card__header">
+                    <div>
+                        <h2>Canais conectados</h2>
+                        <div class="subtitle">N&uacute;meros de WhatsApp, contas de Instagram e p&aacute;ginas. O callback &eacute; conferido a cada 15 min.</div>
+                    </div>
+                    <button class="btn btn--sm" onclick="renderMeta()">Atualizar</button>
+                </div>
+                <div id="metaChannelList"><div class="empty">Carregando canais&hellip;</div></div>
+            </div>
+        </section>
+
     </main>
 </div>
+
+<!-- ===== Destino do canal (Connect ou URL avulsa) ===== -->
+<dialog id="metaTargetDialog">
+    <form id="metaTargetForm" method="dialog">
+        <div class="dialog__header">
+            <h2>Para onde vai este canal?</h2>
+            <button type="button" class="dialog__close" onclick="resolveTarget(null)" aria-label="Fechar">&times;</button>
+        </div>
+        <div class="dialog__body">
+            <div class="callout" style="margin-bottom:16px">
+                Preencha o Connect para criar a inbox automaticamente, ou s&oacute; a URL avulsa para
+                entregar direto no n8n ou no sistema do cliente. Pode usar os dois, ou nenhum.
+            </div>
+            <div class="form-grid">
+                <div class="field">
+                    <label for="tgtBase">Connect (base URL)</label>
+                    <input type="url" id="tgtBase" placeholder="https://connect.synapsea.com.br">
+                </div>
+                <div class="field">
+                    <label for="tgtToken">api_access_token do Connect</label>
+                    <input type="password" id="tgtToken" autocomplete="off">
+                    <span class="hint">Usado uma vez, para criar a inbox. N&atilde;o fica guardado.</span>
+                </div>
+                <div class="field">
+                    <label for="tgtAccount">Account ID</label>
+                    <input type="number" id="tgtAccount" value="1" min="1">
+                </div>
+                <div class="field">
+                    <label for="tgtUrl">URL avulsa</label>
+                    <input type="url" id="tgtUrl" placeholder="https://n8n.synapsea.com.br/webhook/...">
+                </div>
+            </div>
+        </div>
+        <div class="dialog__footer">
+            <button type="button" class="btn" onclick="resolveTarget(null)">Cancelar</button>
+            <button type="submit" class="btn btn--primary">Continuar</button>
+        </div>
+    </form>
+</dialog>
+
+<!-- ===== Relatorio do onboarding ===== -->
+<dialog id="metaStepsDialog">
+    <div class="dialog__header">
+        <h2 id="metaStepsTitle">Onboarding</h2>
+        <button type="button" class="dialog__close" onclick="closeMetaSteps()" aria-label="Fechar">&times;</button>
+    </div>
+    <div class="dialog__body"><div id="metaStepsBody"></div></div>
+    <div class="dialog__footer">
+        <button type="button" class="btn btn--primary" onclick="closeMetaSteps()">Fechar</button>
+    </div>
+</dialog>
 
 <!-- ===== Edit endpoint dialog ===== -->
 <dialog id="editConfigDialog">
@@ -901,6 +1018,340 @@
         }
     }
 
+    // ---------- Apps e canais da Meta ----------
+
+    let metaAppsCache = [];
+    let metaChannelsCache = [];
+    // sessionInfo que o Embedded Signup manda por postMessage: e de lá que saem
+    // o WABA e o phone_number_id, que o code por si nao carrega.
+    let metaSignupInfo = null;
+    let targetResolver = null;
+
+    function toggleAddApp(forceOpen) {
+        const d = document.getElementById('addAppDetails');
+        if (forceOpen === false) { d.open = false; return; }
+        d.open = forceOpen === true ? true : !d.open;
+    }
+
+    function closeMetaSteps() {
+        document.getElementById('metaStepsDialog').close();
+        renderMeta();
+    }
+
+    function showSteps(title, steps) {
+        document.getElementById('metaStepsTitle').textContent = title;
+        document.getElementById('metaStepsBody').innerHTML = (steps || []).map(s => `
+            <div class="row">
+              <div class="row__main">
+                <div class="row__title">
+                  <span class="badge ${s.ok ? 'badge--active' : 'badge--inactive'}">${s.ok ? 'ok' : 'falhou'}</span>
+                  <span class="name">${escapeHtml(s.step)}</span>
+                </div>
+                ${s.detail ? `<div class="row__meta"><span><code>${escapeHtml(String(s.detail))}</code></span></div>` : ''}
+              </div>
+            </div>`).join('') || '<div class="empty">Sem passos para mostrar.</div>';
+        document.getElementById('metaStepsDialog').showModal();
+    }
+
+    /** Abre o dialogo de destino e devolve {chatwoot, route_url} ou null. */
+    function askTarget() {
+        document.getElementById('metaTargetDialog').showModal();
+        return new Promise(resolve => { targetResolver = resolve; });
+    }
+
+    function resolveTarget(value) {
+        document.getElementById('metaTargetDialog').close();
+        const r = targetResolver; targetResolver = null;
+        if (r) r(value);
+    }
+
+    document.getElementById('metaTargetForm').addEventListener('submit', (e) => {
+        e.preventDefault();
+        const base = document.getElementById('tgtBase').value.trim();
+        const token = document.getElementById('tgtToken').value.trim();
+        const account = parseInt(document.getElementById('tgtAccount').value, 10);
+        const url = document.getElementById('tgtUrl').value.trim();
+        const out = {};
+        if (base && token && account) out.chatwoot = { base_url: base, api_token: token, account_id: account };
+        if (url) out.route_url = url;
+        resolveTarget(out);
+    });
+
+    function callbackBadge(channel) {
+        if (channel.product !== 'whatsapp') return '<span class="badge badge--plain">callback do app</span>';
+        const map = {
+            ok: 'badge--active',
+            reaplicado: 'badge--plain',
+            divergente: 'badge--inactive',
+            erro: 'badge--inactive',
+            sem_token: 'badge--plain',
+            sem_public_base_url: 'badge--inactive',
+        };
+        const status = channel.callback_status || 'sem conferencia';
+        return `<span class="badge ${map[status] || 'badge--plain'}">callback: ${escapeHtml(status)}</span>`;
+    }
+
+    async function renderMetaApps() {
+        const el = document.getElementById('metaAppList');
+        try {
+            const response = await fetch(`${API_BASE}/meta/apps`);
+            metaAppsCache = await response.json();
+            if (!Array.isArray(metaAppsCache) || !metaAppsCache.length) {
+                el.innerHTML = '<div class="empty">Nenhum app cadastrado. Clique em <em>+ Novo app</em>.</div>';
+                return;
+            }
+            const base = window.location.origin;
+            el.innerHTML = metaAppsCache.map(app => {
+                const callback = `${base}/webhook/app/${app.app_id}`;
+                return `
+                  <div class="row ${app.is_active ? '' : 'row--inactive'}">
+                    <div class="row__main">
+                      <div class="row__title">
+                        <span class="name">${escapeHtml(app.name)}</span>
+                        <span class="badge ${app.is_active ? 'badge--active' : 'badge--inactive'}">${app.is_active ? 'Ativo' : 'Inativo'}</span>
+                        <span class="badge badge--plain">app ${escapeHtml(app.app_id)}</span>
+                        <span class="badge badge--plain">${escapeHtml(app.graph_api_version)}</span>
+                        ${app.config_id ? '' : '<span class="badge badge--inactive">sem config_id</span>'}
+                      </div>
+                      <div class="row__meta">
+                        <span class="copyable">
+                          <span class="url">${escapeHtml(callback)}</span>
+                          <button type="button" onclick="copyToClipboard('${callback.replace(/'/g, "\\'")}', this)">Copiar callback</button>
+                        </span>
+                      </div>
+                      <div class="row__meta">
+                        <span class="copyable">
+                          <span><strong>verify token:</strong> <code>${escapeHtml(maskToken(app.verify_token))}</code></span>
+                          <button type="button" onclick="copyToClipboard('${String(app.verify_token).replace(/'/g, "\\'")}', this)">Copiar token</button>
+                        </span>
+                      </div>
+                    </div>
+                    <div class="row__actions">
+                      <button class="btn btn--sm btn--primary" onclick="connectWhatsapp(${app.id})">Conectar WhatsApp</button>
+                      <button class="btn btn--sm" onclick="connectInstagram(${app.id})">Conectar Instagram</button>
+                      <button class="btn btn--sm" onclick="toggleApp(${app.id}, ${!app.is_active})">${app.is_active ? 'Desativar' : 'Ativar'}</button>
+                      <button class="btn btn--sm btn--danger" onclick="deleteApp(${app.id})">Excluir</button>
+                    </div>
+                  </div>`;
+            }).join('');
+        } catch (err) {
+            el.innerHTML = '<div class="empty">Falha ao carregar os apps.</div>';
+            console.error(err);
+        }
+    }
+
+    async function renderMetaChannels() {
+        const el = document.getElementById('metaChannelList');
+        try {
+            const response = await fetch(`${API_BASE}/meta/channels`);
+            metaChannelsCache = await response.json();
+            const status = await (await fetch(`${API_BASE}/meta/callback-status`)).json();
+            const statusById = {};
+            (Array.isArray(status) ? status : []).forEach(s => { statusById[s.id] = s; });
+
+            if (!Array.isArray(metaChannelsCache) || !metaChannelsCache.length) {
+                el.innerHTML = '<div class="empty">Nenhum canal conectado ainda.</div>';
+                return;
+            }
+            el.innerHTML = metaChannelsCache.map(c => {
+                const extra = statusById[c.id] || {};
+                const channel = { ...c, ...extra };
+                const routes = (c.routes || []).map(r => `<code>${escapeHtml(r.slug)}</code>`).join(' ') || '<span class="text-muted">sem rota</span>';
+                const checked = channel.callback_checked_at ? new Date(channel.callback_checked_at).toLocaleString() : 'nunca';
+                const expires = channel.token_expires_at ? new Date(channel.token_expires_at).toLocaleDateString() : '—';
+                return `
+                  <div class="row ${c.is_active ? '' : 'row--inactive'}">
+                    <div class="row__main">
+                      <div class="row__title">
+                        <span class="name">${escapeHtml(c.name)}</span>
+                        <span class="badge badge--plain">${escapeHtml(c.product)}</span>
+                        ${callbackBadge(channel)}
+                        ${channel.callback_error ? '<span class="badge badge--inactive">com erro</span>' : ''}
+                      </div>
+                      <div class="row__meta">
+                        <span><strong>conta:</strong> <code>${escapeHtml(c.external_id)}</code></span>
+                        ${c.phone_number_id ? `<span><strong>n&uacute;mero:</strong> <code>${escapeHtml(c.phone_number_id)}</code></span>` : ''}
+                        ${c.display_name ? `<span><strong>nome:</strong> ${escapeHtml(c.display_name)}</span>` : ''}
+                      </div>
+                      <div class="row__meta">
+                        <span><strong>rotas:</strong> ${routes}</span>
+                        <span><strong>conferido:</strong> ${escapeHtml(checked)}</span>
+                        <span><strong>token vence:</strong> ${escapeHtml(expires)}</span>
+                        ${c.inbox_ref ? `<span><strong>inbox:</strong> ${escapeHtml(c.inbox_ref)}</span>` : ''}
+                      </div>
+                      ${channel.callback_error ? `<div class="row__meta"><span><code>${escapeHtml(channel.callback_error)}</code></span></div>` : ''}
+                    </div>
+                    <div class="row__actions">
+                      ${c.product === 'whatsapp' ? `<button class="btn btn--sm" onclick="checkCallback(${c.id})">Conferir callback</button>` : ''}
+                      <button class="btn btn--sm" onclick="addRoute(${c.id}, '${c.product}')">+ Rota</button>
+                    </div>
+                  </div>`;
+            }).join('');
+        } catch (err) {
+            el.innerHTML = '<div class="empty">Falha ao carregar os canais.</div>';
+            console.error(err);
+        }
+    }
+
+    async function renderMeta() {
+        await renderMetaApps();
+        await renderMetaChannels();
+    }
+
+    document.getElementById('addAppForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const body = {
+            name: document.getElementById('appName').value.trim(),
+            app_id: document.getElementById('appAppId').value.trim(),
+            app_secret: document.getElementById('appSecret').value,
+            config_id: document.getElementById('appConfigId').value.trim() || null,
+            graph_api_version: document.getElementById('appVersion').value.trim() || 'v22.0',
+        };
+        try {
+            const response = await fetch(`${API_BASE}/meta/apps`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+            });
+            if (response.ok) {
+                toast('App cadastrado', 'success');
+                document.getElementById('addAppForm').reset();
+                document.getElementById('appVersion').value = 'v22.0';
+                toggleAddApp(false);
+                await renderMeta();
+            } else {
+                const data = await response.json().catch(() => ({}));
+                toast('Falhou: ' + (data.error || response.statusText), 'error');
+            }
+        } catch (err) { toast('Falhou ao cadastrar', 'error'); console.error(err); }
+    });
+
+    async function toggleApp(id, isActive) {
+        const response = await fetch(`${API_BASE}/meta/apps/${id}`, {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ is_active: isActive }),
+        });
+        response.ok ? toast(isActive ? 'App ativado' : 'App desativado', 'success') : toast('Falhou', 'error');
+        await renderMeta();
+    }
+
+    async function deleteApp(id) {
+        if (!confirm('Excluir o app? Os canais dele saem junto; os endpoints ficam, sem v&iacute;nculo.')) return;
+        const response = await fetch(`${API_BASE}/meta/apps/${id}`, { method: 'DELETE' });
+        response.ok ? toast('App exclu&iacute;do', 'success') : toast('Falhou', 'error');
+        await renderMeta();
+    }
+
+    async function checkCallback(channelId) {
+        try {
+            const response = await fetch(`${API_BASE}/meta/channels/${channelId}/check-callback`, { method: 'POST' });
+            const data = await response.json();
+            if (!response.ok) return toast(data.error || 'Falhou', 'error');
+            const tipo = data.status === 'ok' ? 'success' : data.status === 'reaplicado' ? 'success' : 'error';
+            toast(`Callback: ${data.status}`, tipo);
+            await renderMetaChannels();
+        } catch (err) { toast('Falhou ao conferir', 'error'); console.error(err); }
+    }
+
+    async function addRoute(channelId, product) {
+        const target = await askTarget();
+        if (!target) return;
+        if (product === 'instagram' && target.chatwoot) {
+            const r = await fetch(`${API_BASE}/meta/channels/${channelId}/route-instagram`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ base_url: target.chatwoot.base_url }),
+            });
+            r.ok ? toast('Rota criada', 'success') : toast('Falhou ao criar a rota', 'error');
+        }
+        if (target.route_url) {
+            const channel = metaChannelsCache.find(c => c.id === channelId);
+            const slug = `${product}-${channelId}-${Date.now().toString(36)}`;
+            const r = await fetch(`${API_BASE}/webhook-configs`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    name: `${channel ? channel.name : 'Canal'} → destino`,
+                    slug,
+                    source_type: 'meta_cloud_api',
+                    target_type: 'raw_forward',
+                    target_config: { url: target.route_url },
+                    meta_channel_id: channelId,
+                }),
+            });
+            r.ok ? toast('Destino ligado ao canal', 'success') : toast('Falhou ao ligar o destino', 'error');
+        }
+        await renderMetaChannels();
+    }
+
+    async function loadFbSdk(appId, version) {
+        if (!window.FB) {
+            await new Promise((resolve, reject) => {
+                const s = document.createElement('script');
+                s.src = 'https://connect.facebook.net/en_US/sdk.js';
+                s.async = true;
+                s.onload = resolve;
+                s.onerror = () => reject(new Error('O SDK do Facebook n&atilde;o carregou'));
+                document.head.appendChild(s);
+            });
+        }
+        window.FB.init({ appId, cookie: true, xfbml: false, version });
+    }
+
+    // O Embedded Signup devolve o WABA e o numero por postMessage, nao no code.
+    window.addEventListener('message', (event) => {
+        try {
+            if (!/(^|\.)facebook\.com$/.test(new URL(event.origin).hostname)) return;
+            const data = JSON.parse(event.data);
+            if (data.type === 'WA_EMBEDDED_SIGNUP' && data.data) metaSignupInfo = data.data;
+        } catch (_) { /* mensagem de outra origem ou sem JSON */ }
+    });
+
+    async function connectWhatsapp(appId) {
+        let cfg;
+        try {
+            cfg = await (await fetch(`${API_BASE}/meta/apps/${appId}/signup-config`)).json();
+        } catch (err) { return toast('Falhou ao ler a config do app', 'error'); }
+        if (!cfg.config_id) return toast('Cadastre o Configuration ID do Embedded Signup neste app', 'error');
+        if (!cfg.public_base_url_set) return toast('PUBLIC_BASE_URL n&atilde;o est&aacute; configurado no servidor', 'error');
+
+        metaSignupInfo = null;
+        try { await loadFbSdk(cfg.app_id, cfg.graph_api_version); } catch (err) { return toast(err.message, 'error'); }
+
+        window.FB.login(async (response) => {
+            const code = response && response.authResponse && response.authResponse.code;
+            if (!code) return toast('Autoriza&ccedil;&atilde;o cancelada', 'error');
+
+            let waba = metaSignupInfo && metaSignupInfo.waba_id;
+            let phone = metaSignupInfo && metaSignupInfo.phone_number_id;
+            if (!waba || !phone) {
+                waba = (prompt('O SDK n&atilde;o informou o WABA. Cole o WABA ID:', '') || '').trim();
+                phone = (prompt('Cole o phone number ID:', '') || '').trim();
+                if (!waba || !phone) return toast('Sem WABA e n&uacute;mero n&atilde;o d&aacute; para concluir', 'error');
+            }
+
+            const target = await askTarget();
+            if (!target) return;
+
+            const body = { code, waba_id: waba, phone_number_id: phone, ...target };
+            const r = await fetch(`${API_BASE}/meta/apps/${appId}/whatsapp/connect`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+            });
+            const data = await r.json().catch(() => ({}));
+            showSteps(r.ok ? 'WhatsApp conectado' : 'Onboarding falhou', data.steps || [{ step: data.error || 'erro desconhecido', ok: false }]);
+        }, {
+            config_id: cfg.config_id,
+            response_type: 'code',
+            override_default_response_type: true,
+            extras: { setup: {}, sessionInfoVersion: '3' },
+        });
+    }
+
+    async function connectInstagram(appId) {
+        try {
+            const r = await fetch(`${API_BASE}/meta/apps/${appId}/instagram/start`);
+            const data = await r.json();
+            if (!r.ok) return toast(data.error || 'Falhou', 'error');
+            toast('Abrindo a autoriza&ccedil;&atilde;o do Instagram…', 'success');
+            window.open(data.authorize_url, '_blank', 'noopener');
+        } catch (err) { toast('Falhou ao iniciar', 'error'); console.error(err); }
+    }
+
     // ---------- Init ----------
 
     function init() {
@@ -909,6 +1360,14 @@
 
         updateConfigTargetVisibility();
         renderConfigs();
+        renderMeta();
+
+        // Volta do OAuth do Instagram: /api/.../instagram/callback redireciona para ca.
+        const params = new URLSearchParams(window.location.search);
+        if (params.get('meta') === 'instagram-conectado') {
+            toast('Instagram conectado. Ligue um destino ao canal.', 'success');
+            history.replaceState(null, '', window.location.pathname + '#meta');
+        }
         renderWebhooks();
         renderJobStatus();
         renderReceivedLog();

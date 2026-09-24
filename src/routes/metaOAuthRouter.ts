@@ -186,6 +186,24 @@ router.post('/meta/apps/:id/whatsapp/connect', requireLogin, async (req: Request
       }
     }
 
+    // F5: cliente sem Connect - o canal entrega direto no n8n ou no sistema dele.
+    if (typeof body.route_url === 'string' && body.route_url.trim()) {
+      try {
+        await createWebhookConfig({
+          name: `${name} → destino`,
+          slug: slugify(`${name}-destino`, `wa-${phoneNumberId}-destino`),
+          source_type: 'meta_cloud_api',
+          target_type: 'raw_forward',
+          target_config: { url: body.route_url.trim() },
+          meta_channel_id: channel.id,
+          is_active: true,
+        });
+        steps.push({ step: 'cria a rota avulsa', ok: true, detail: body.route_url.trim() });
+      } catch (error: any) {
+        steps.push({ step: 'cria a rota avulsa', ok: false, detail: error?.message });
+      }
+    }
+
     const saved = await saveChannelConnection({
       channelId: channel.id,
       accessToken,

@@ -16,6 +16,30 @@ Módulo dentro do redirector, não projeto novo. Motivos:
 - O `oauth-hub-zdg` é AGPL v3: fazer fork dele e servir para clientes obriga a
   abrir o fonte. Ele serve como referência de fluxo, não como base de código.
 
+## Estado em 24/09/2026
+
+O dono confirmou o redirector como **core**: as integrações não entram direto no Connect, o
+redirector intermedia, e a mesma camada vai servir outras integrações.
+
+Em produção:
+
+- **Fase 1** — entrada multi-cliente `/webhook/app/<app_id>`, assinatura sobre o corpo cru,
+  roteamento por WABA/número e por conta de Instagram ou página.
+- **Fase 2** — onboarding completo: `POST /api/meta/apps/:id/whatsapp/connect` (Embedded
+  Signup), Instagram por `/instagram/start` + `/callback`, criação da inbox no Connect pela
+  API e vigia do callback a cada 15 min com reaplicação automática.
+- **Fase 4** — aba **Meta** no painel: cadastro de app com a URL de callback e o verify token
+  prontos para copiar, botões de conectar WhatsApp e Instagram, estado do callback por canal e
+  diálogo de destino.
+- **Fase 5** — destino avulso: o canal pode entregar direto no n8n ou no sistema do cliente,
+  sem Connect no caminho (`route_url` no onboarding, ou `+ Rota` no painel).
+- `vigia-infra.sh` passou a alertar quando o callback de algum canal sai do lugar ou quando o
+  vigia interno para de conferir.
+- 98 cenários em `test/meta-e2e/run.sh`, com duplo da Graph API e da API do Chatwoot.
+
+Falta, e depende de ação no painel da Meta: apontar o callback do app para o redirector
+(Instagram e Messenger) e a verificação de **Tech Provider** para onboardar terceiros.
+
 ## O que a mudança exige de verdade
 
 Com Embedded Signup a Meta manda **todos os clientes de um app para uma única

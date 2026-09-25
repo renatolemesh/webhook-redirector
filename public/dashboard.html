@@ -1313,7 +1313,12 @@
         metaSignupInfo = null;
         try { await loadFbSdk(cfg.app_id, cfg.graph_api_version); } catch (err) { return toast(err.message, 'error'); }
 
-        window.FB.login(async (response) => {
+        // O destino vem antes do login: o code do Embedded Signup expira em
+        // segundos e nao pode esperar o dialogo.
+        const target = await askTarget();
+        if (!target) return;
+
+        const finish = async (response) => {
             const code = response && response.authResponse && response.authResponse.code;
             if (!code) return toast('Autorização cancelada', 'error');
 
@@ -1325,16 +1330,16 @@
                 if (!waba || !phone) return toast('Sem WABA e número não dá para concluir', 'error');
             }
 
-            const target = await askTarget();
-            if (!target) return;
-
             const body = { code, waba_id: waba, phone_number_id: phone, ...target };
             const r = await fetch(`${API_BASE}/meta/apps/${appId}/whatsapp/connect`, {
                 method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
             });
             const data = await r.json().catch(() => ({}));
             showSteps(r.ok ? 'WhatsApp conectado' : 'Onboarding falhou', data.steps || [{ step: data.error || 'erro desconhecido', ok: false }]);
-        }, {
+        };
+
+        // FB.login recusa callback async ("Expression is of type asyncfunction").
+        window.FB.login((response) => { finish(response); }, {
             config_id: cfg.config_id,
             response_type: 'code',
             override_default_response_type: true,

@@ -8,9 +8,11 @@ import {
   getCallbackStatus,
   getMetaChannelById,
   recordCallbackCheck,
+  linkChannelRoutes,
+  unlinkChannelRoute,
   MetaProduct,
 } from '../models/metaModel';
-import { createWebhookConfig } from '../models/webhookConfigModel';
+import { createWebhookConfig, getWebhookConfigById } from '../models/webhookConfigModel';
 import {
   exchangeCodeForToken,
   debugToken,
@@ -81,6 +83,42 @@ router.get('/meta/apps/:id/signup-config', requireLogin, async (req: Request, re
  * o servidor faz o resto. Ordem importa - o override do callback vem antes de
  * criar a inbox no Connect, para a entrada ja estar nossa quando o canal nascer.
  */
+/**
+ * Credenciais do Connect para criar a inbox: digitadas na hora (`chatwoot`) ou
+ * tiradas de um endpoint chatwoot_api ja cadastrado (`chatwoot_endpoint_id`),
+ * que tem base_url, api_token e account_id.
+ */
+const resolveChatwootTarget = async (body: any): Promise<ChatwootTarget | null> => {
+  const endpointId = Number(body?.chatwoot_endpoint_id);
+  if (Number.isInteger(endpointId) && endpointId > 0) {
+    const config = await getWebhookConfigById(endpointId);
+    if (!config || config.target_type !== 'chatwoot_api') {
+      throw new Error(`endpoint ${endpointId} nao e um Connect (chatwoot_api)`);
+    }
+    return parseChatwootTarget(config.target_config);
+  }
+  return parseChatwootTarget(body?.chatwoot);
+};
+
+/**
+ * Valida os endpoints escolhidos para o canal. So entram os que recebem o
+ * formato da Meta: um endpoint uazapi traduziria o payload errado.
+ */
+const validateEndpointIds = async (raw: unknown): Promise<{ ids: number[]; error?: string }> => {
+  if (raw === undefined || raw === null) return { ids: [] };
+  if (!Array.isArray(raw)) return { ids: [], error: 'endpoint_ids deve ser uma lista' };
+  const ids = [...new Set(raw.map(Number))];
+  for (const id of ids) {
+    if (!Number.isInteger(id) || id <= 0) return { ids: [], error: `endpoint invalido: ${id}` };
+    const config = await getWebhookConfigById(id);
+    if (!config) return { ids: [], error: `endpoint ${id} nao existe` };
+    if (config.source_type !== 'meta_cloud_api') {
+      return { ids: [], error: `endpoint ${config.slug} nao recebe o formato da Meta (${config.source_type})` };
+    }
+  }
+  return { ids };
+};
+
 router.post('/meta/apps/:id/whatsapp/connect', requireLogin, async (req: Request, res: Response) => {
   const app = await getMetaAppById(parseInt(req.params.id, 10));
   if (!app) return res.status(404).json({ error: 'Not found' });
@@ -92,6 +130,15 @@ router.post('/meta/apps/:id/whatsapp/connect', requireLogin, async (req: Request
   }
   if (!process.env.PUBLIC_BASE_URL) {
     return res.status(500).json({ error: 'PUBLIC_BASE_URL nao configurado no servidor' });
+  }
+  // Valida antes de gastar o code, que so vale uma vez.
+  const endpoints = await validateEndpointIds(body.endpoint_ids);
+  if (endpoints.error) return res.status(400).json({ error: endpoints.error });
+  let target: ChatwootTarget | null;
+  try {
+    target = await resolveChatwootTarget(body);
+  } catch (error: any) {
+    return res.status(400).json({ error: error.message });
   }
 
   const steps: Step[] = [];
@@ -150,7 +197,6 @@ router.post('/meta/apps/:id/whatsapp/connect', requireLogin, async (req: Request
 
     // Provisiona a inbox ANTES de gravar o inbox_ref, para o ref refletir a realidade.
     let inboxRef: string | null = null;
-    const target = parseChatwootTarget(body.chatwoot);
     if (target) {
       try {
         const inbox = await provisionWhatsappInbox(target, {
@@ -202,6 +248,11 @@ router.post('/meta/apps/:id/whatsapp/connect', requireLogin, async (req: Request
       } catch (error: any) {
         steps.push({ step: 'cria a rota avulsa', ok: false, detail: error?.message });
       }
+    }
+
+    if (endpoints.ids.length) {
+      await linkChannelRoutes(channel.id, endpoints.ids);
+      steps.push({ step: 'liga os endpoints escolhidos', ok: true, detail: `${endpoints.ids.length} endpoint(s)` });
     }
 
     const saved = await saveChannelConnection({
@@ -314,6 +365,23 @@ router.post('/meta/channels/:id/route-instagram', requireLogin, async (req: Requ
     console.error('[meta-oauth] criacao de rota falhou:', error?.message || error);
     res.status(500).json({ error: 'nao foi possivel criar a rota' });
   }
+});
+
+/** Liga endpoints existentes a um canal ja conectado. */
+router.post('/meta/channels/:id/routes', requireLogin, async (req: Request, res: Response) => {
+  const channel = await getMetaChannelById(parseInt(req.params.id, 10));
+  if (!channel) return res.status(404).json({ error: 'Not found' });
+  const endpoints = await validateEndpointIds(req.body?.endpoint_ids);
+  if (endpoints.error) return res.status(400).json({ error: endpoints.error });
+  if (!endpoints.ids.length) return res.status(400).json({ error: 'endpoint_ids vazio' });
+  await linkChannelRoutes(channel.id, endpoints.ids);
+  res.status(201).json({ linked: endpoints.ids });
+});
+
+router.delete('/meta/channels/:id/routes/:configId', requireLogin, async (req: Request, res: Response) => {
+  const removed = await unlinkChannelRoute(parseInt(req.params.id, 10), parseInt(req.params.configId, 10));
+  if (!removed) return res.status(404).json({ error: 'endpoint nao esta ligado a este canal' });
+  res.status(204).end();
 });
 
 /** Estado do callback de cada canal. Token tambem serve, para o vigia-infra. */

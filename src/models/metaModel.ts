@@ -126,19 +126,28 @@ export const deleteMetaApp = async (id: number): Promise<boolean> => {
 
 // ---------- meta_channels ----------
 
+/**
+ * Rotas de um canal: a criada pelo onboarding (meta_channel_id) e os endpoints
+ * existentes ligados por meta_channel_routes. O OR no ON nao duplica linha,
+ * porque cada endpoint casa com o canal uma vez so.
+ */
+const ROUTE_JOIN = `(w.meta_channel_id = c.id
+            OR w.id IN (SELECT r.webhook_config_id FROM meta_channel_routes r WHERE r.meta_channel_id = c.id))`;
+
 /** Canais com os endpoints pendurados em cada um, para o painel. */
 export const getMetaChannels = async (metaAppId?: number) => {
   const res = await pool.query(
     `SELECT c.*,
             COALESCE(
               json_agg(
-                json_build_object('id', w.id, 'slug', w.slug, 'name', w.name, 'is_active', w.is_active)
+                json_build_object('id', w.id, 'slug', w.slug, 'name', w.name, 'is_active', w.is_active,
+                                  'linked', w.meta_channel_id IS DISTINCT FROM c.id)
                 ORDER BY w.id
               ) FILTER (WHERE w.id IS NOT NULL),
               '[]'
             ) AS routes
        FROM meta_channels c
-       LEFT JOIN webhook_configs w ON w.meta_channel_id = c.id
+       LEFT JOIN webhook_configs w ON ${ROUTE_JOIN}
       WHERE ($1::int IS NULL OR c.meta_app_id = $1)
       GROUP BY c.id
       ORDER BY c.id ASC`,
@@ -194,7 +203,7 @@ export const getActiveRoutesForApp = async (metaAppId: number): Promise<MetaRout
             c.external_id     AS channel_external_id,
             c.phone_number_id AS channel_phone_number_id
        FROM meta_channels c
-       JOIN webhook_configs w ON w.meta_channel_id = c.id
+       JOIN webhook_configs w ON ${ROUTE_JOIN}
       WHERE c.meta_app_id = $1
         AND c.is_active
         AND w.is_active
@@ -332,4 +341,33 @@ export const saveChannelConnection = async (opts: {
     [opts.accessToken, opts.tokenExpiresAt, opts.displayName, opts.inboxRef ?? null, opts.channelId]
   );
   return res.rows[0] || null;
+};
+
+// ---------- endpoints ligados a canais ----------
+
+/** Liga endpoints existentes ao canal. Ligar de novo nao duplica. */
+export const linkChannelRoutes = async (channelId: number, configIds: number[]): Promise<void> => {
+  if (!configIds.length) return;
+  await pool.query(
+    `INSERT INTO meta_channel_routes (meta_channel_id, webhook_config_id)
+     SELECT $1, unnest($2::int[])
+     ON CONFLICT DO NOTHING`,
+    [channelId, configIds]
+  );
+};
+
+/**
+ * Tira o endpoint do canal. Se for a rota criada pelo onboarding, o endpoint
+ * fica, so sem canal - apagar e decisao da aba de endpoints.
+ */
+export const unlinkChannelRoute = async (channelId: number, configId: number): Promise<boolean> => {
+  const linked = await pool.query(
+    'DELETE FROM meta_channel_routes WHERE meta_channel_id = $1 AND webhook_config_id = $2',
+    [channelId, configId]
+  );
+  const owned = await pool.query(
+    'UPDATE webhook_configs SET meta_channel_id = NULL WHERE id = $1 AND meta_channel_id = $2',
+    [configId, channelId]
+  );
+  return (linked.rowCount ?? 0) + (owned.rowCount ?? 0) > 0;
 };

@@ -237,6 +237,17 @@ const runInitDb = async () => {
       CREATE INDEX IF NOT EXISTS idx_webhook_configs_meta_channel
         ON webhook_configs(meta_channel_id);
 
+      -- Endpoint existente ligado a um canal, sem copiar nem mover o endpoint:
+      -- o mesmo n8n ou sistema pode servir varios canais, e editar o endpoint
+      -- vale para todos. Convive com webhook_configs.meta_channel_id, que e a
+      -- rota criada pelo proprio onboarding.
+      CREATE TABLE IF NOT EXISTS meta_channel_routes (
+        meta_channel_id   INTEGER NOT NULL REFERENCES meta_channels(id) ON DELETE CASCADE,
+        webhook_config_id INTEGER NOT NULL REFERENCES webhook_configs(id) ON DELETE CASCADE,
+        created_at        TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (meta_channel_id, webhook_config_id)
+      );
+
       -- Fase 2 (OAuth): o que o onboarding precisa guardar.
       DO $$
       BEGIN

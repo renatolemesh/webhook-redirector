@@ -146,6 +146,82 @@ const control = (path, body) => fetch(SINK + path, { method: 'POST', headers: { 
   }
   ok(igDelivered && igDelivered.length === 1, `evento de Instagram roteado para o Connect certo (${igDelivered ? igDelivered.length : 0})`);
 
+  console.log('--- endpoints existentes como destino do canal');
+  const mkEndpoint = async (body) => (await api('POST', '/api/webhook-configs', body)).json;
+  const shared = await mkEndpoint({ name: 'n8n compartilhado', slug: 'n8n-compartilhado', source_type: 'meta_cloud_api', target_type: 'raw_forward', target_config: { url: `${SINK}/n8n-compartilhado` } });
+  const uaz = await mkEndpoint({ name: 'uazapi qualquer', slug: 'uazapi-qualquer', source_type: 'uazapi', target_type: 'raw_forward', target_config: { url: `${SINK}/uazapi` } });
+  const cwEndpoint = await mkEndpoint({ name: 'Connect cadastrado', slug: 'connect-cadastrado', source_type: 'uazapi', target_type: 'chatwoot_api', target_config: { base_url: SINK, api_token: 'token-do-endpoint', account_id: 7, inbox_id: 1 } });
+  ok(shared && shared.id && uaz && uaz.id && cwEndpoint && cwEndpoint.id, 'cria os endpoints de apoio');
+
+  r = await api('POST', `/api/meta/channels/${channelId}/routes`, { endpoint_ids: [uaz.id] });
+  ok(r.status === 400 && /formato da Meta/.test(r.text), `endpoint uazapi recusado como destino da Meta (${r.status})`);
+  r = await api('POST', `/api/meta/channels/${channelId}/routes`, { endpoint_ids: [999999] });
+  ok(r.status === 400, `endpoint inexistente -> 400 (${r.status})`);
+  r = await api('POST', `/api/meta/channels/${channelId}/routes`, { endpoint_ids: [shared.id] });
+  ok(r.status === 201, `liga endpoint existente ao canal (${r.status} ${r.status !== 201 ? r.text : ''})`);
+  r = await api('POST', `/api/meta/channels/${channelId}/routes`, { endpoint_ids: [shared.id] });
+  ok(r.status === 201, 'ligar de novo nao da erro');
+  r = await api('GET', `/api/meta/channels?meta_app_id=${app.id}`);
+  const waRow = (r.json || []).find((c) => c.id === channelId);
+  const sharedHits = (waRow ? waRow.routes : []).filter((x) => x.id === shared.id);
+  ok(sharedHits.length === 1 && sharedHits[0].linked === true, `endpoint aparece uma vez nas rotas do canal (${sharedHits.length})`);
+
+  const sendWa = async (wamid) => {
+    const p2 = JSON.parse(JSON.stringify(payload));
+    p2.entry[0].changes[0].value.messages[0].id = wamid;
+    const raw2 = JSON.stringify(p2);
+    const sig2 = 'sha256=' + crypto.createHmac('sha256', SECRET).update(raw2).digest('hex');
+    return fetch(`${BASE}/webhook/app/${APP_ID}`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Hub-Signature-256': sig2 }, body: raw2 });
+  };
+  const waitFor = async (pred) => {
+    for (let i = 0; i < 30; i++) {
+      const d = await dump();
+      if (pred(d.deliveries)) return d.deliveries;
+      await new Promise((res) => setTimeout(res, 1000));
+    }
+    return (await dump()).deliveries;
+  };
+  const idOf = (x) => x.body && x.body.entry && x.body.entry[0].changes[0].value.messages[0].id;
+
+  await sendWa('wamid.shared1');
+  let dl = await waitFor((ds) => ds.some((x) => x.path === '/n8n-compartilhado' && idOf(x) === 'wamid.shared1')
+    && ds.some((x) => x.path === '/webhooks/whatsapp/+554199990000' && idOf(x) === 'wamid.shared1'));
+  ok(dl.filter((x) => x.path === '/n8n-compartilhado' && idOf(x) === 'wamid.shared1').length === 1, 'evento chega no endpoint ligado');
+  ok(dl.filter((x) => x.path === '/webhooks/whatsapp/+554199990000' && idOf(x) === 'wamid.shared1').length === 1, 'e continua chegando na rota do onboarding');
+
+  console.log('--- connect com credenciais de um endpoint Connect e endpoints na mesma chamada');
+  const graphBefore = (await dump()).graph.filter((g) => g.op === 'exchange_code').length;
+  r = await api('POST', `/api/meta/apps/${app.id}/whatsapp/connect`, { code: 'CODE-X', waba_id: WABA, phone_number_id: '8418017256929391', endpoint_ids: [uaz.id] });
+  ok(r.status === 400, `endpoint invalido recusado antes da troca (${r.status})`);
+  ok((await dump()).graph.filter((g) => g.op === 'exchange_code').length === graphBefore, 'o code nao foi gasto');
+  r = await api('POST', `/api/meta/apps/${app.id}/whatsapp/connect`, { code: 'CODE-X', waba_id: WABA, phone_number_id: '8418017256929391', chatwoot_endpoint_id: shared.id });
+  ok(r.status === 400 && /chatwoot_api/.test(r.text), `chatwoot_endpoint_id que nao e Connect -> 400 (${r.status})`);
+  r = await api('POST', `/api/meta/apps/${app.id}/whatsapp/connect`, {
+    code: 'CODE-VALIDO-2', waba_id: WABA, phone_number_id: '8418017256929391', name: 'Loja Dois',
+    chatwoot_endpoint_id: cwEndpoint.id, endpoint_ids: [shared.id],
+  });
+  ok(r.status === 201, `connect com endpoint Connect -> 201 (${r.status} ${r.status !== 201 ? r.text : ''})`);
+  const steps2 = (r.json && r.json.steps) || [];
+  ok(steps2.some((x) => x.step.includes('liga os endpoints') && x.ok), 'passo: liga os endpoints escolhidos');
+  const inbox2 = (await dump()).inboxes.pop();
+  ok(inbox2 && inbox2.token === 'token-do-endpoint' && /accounts\/7\//.test(inbox2.path || ''),
+    `inbox criada com token e conta do endpoint (${inbox2 && inbox2.path})`);
+
+  console.log('--- desligar endpoint do canal');
+  r = await api('DELETE', `/api/meta/channels/${channelId}/routes/${shared.id}`);
+  ok(r.status === 204, `desliga o endpoint (${r.status})`);
+  r = await api('DELETE', `/api/meta/channels/${channelId}/routes/${shared.id}`);
+  ok(r.status === 404, `desligar de novo -> 404 (${r.status})`);
+  await sendWa('wamid.shared2');
+  dl = await waitFor((ds) => ds.some((x) => x.path === '/webhooks/whatsapp/+554199990000' && idOf(x) === 'wamid.shared2'));
+  await new Promise((res) => setTimeout(res, 1500));
+  dl = (await dump()).deliveries;
+  ok(dl.some((x) => x.path === '/webhooks/whatsapp/+554199990000' && idOf(x) === 'wamid.shared2'), 'rota do onboarding segue recebendo');
+  ok(!dl.some((x) => x.path === '/n8n-compartilhado' && idOf(x) === 'wamid.shared2' && x.body.entry[0].changes[0].value.metadata.phone_number_id === PNID)
+    , 'endpoint desligado nao recebe mais deste canal');
+  r = await api('GET', '/api/webhook-configs');
+  ok((r.json || []).some((c) => c.id === shared.id), 'o endpoint continua existindo');
+
   console.log(`\n${passes} PASS, ${failures} FAIL`);
   process.exit(failures ? 1 : 0);
 })().catch((e) => { console.error('ERRO NO TESTE:', e); process.exit(2); });

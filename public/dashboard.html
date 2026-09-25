@@ -288,7 +288,7 @@
     </main>
 </div>
 
-<!-- ===== Destino do canal (Connect ou URL avulsa) ===== -->
+<!-- ===== Destinos do canal: endpoints do redirector + inbox opcional no Connect ===== -->
 <dialog id="metaTargetDialog">
     <form id="metaTargetForm" method="dialog">
         <div class="dialog__header">
@@ -296,28 +296,35 @@
             <button type="button" class="dialog__close" onclick="resolveTarget(null)" aria-label="Fechar">&times;</button>
         </div>
         <div class="dialog__body">
-            <div class="callout" style="margin-bottom:16px">
-                Preencha o Connect para criar a inbox automaticamente, ou s&oacute; a URL avulsa para
-                entregar direto no n8n ou no sistema do cliente. Pode usar os dois, ou nenhum.
+            <div class="field">
+                <label>Endpoints do redirector</label>
+                <div id="tgtEndpoints" style="display:flex;flex-direction:column;gap:6px;max-height:220px;overflow:auto"></div>
+                <span class="hint">Marque quantos quiser: cada um recebe uma c&oacute;pia dos eventos. S&oacute; aparecem os que recebem o formato da Meta. Um endpoint que aponta para a caixa de outro n&uacute;mero passa a receber este tamb&eacute;m.</span>
             </div>
-            <div class="form-grid">
+            <div class="field">
+                <label for="tgtConnect">Criar caixa no Connect</label>
+                <select id="tgtConnect" onchange="toggleManualConnect()"></select>
+                <span class="hint">Cria a caixa pela API e a rota para ela. As credenciais v&ecirc;m do endpoint Connect escolhido.</span>
+            </div>
+            <div id="tgtManual" class="form-grid hide">
                 <div class="field">
                     <label for="tgtBase">Connect (base URL)</label>
                     <input type="url" id="tgtBase" placeholder="https://connect.synapsea.com.br">
                 </div>
                 <div class="field">
-                    <label for="tgtToken">api_access_token do Connect</label>
+                    <label for="tgtToken">api_access_token</label>
                     <input type="password" id="tgtToken" autocomplete="off">
-                    <span class="hint">Usado uma vez, para criar a inbox. N&atilde;o fica guardado.</span>
+                    <span class="hint">Usado uma vez, n&atilde;o fica guardado.</span>
                 </div>
                 <div class="field">
                     <label for="tgtAccount">Account ID</label>
                     <input type="number" id="tgtAccount" value="1" min="1">
                 </div>
-                <div class="field">
-                    <label for="tgtUrl">URL avulsa</label>
-                    <input type="url" id="tgtUrl" placeholder="https://n8n.synapsea.com.br/webhook/...">
-                </div>
+            </div>
+            <div class="field">
+                <label for="tgtUrl">Nova URL</label>
+                <input type="url" id="tgtUrl" placeholder="https://n8n.synapsea.com.br/webhook/...">
+                <span class="hint">Para um destino que ainda n&atilde;o &eacute; endpoint. Vira um endpoint deste canal.</span>
             </div>
         </div>
         <div class="dialog__footer">
@@ -1053,10 +1060,44 @@
         document.getElementById('metaStepsDialog').showModal();
     }
 
-    /** Abre o dialogo de destino e devolve {chatwoot, route_url} ou null. */
-    function askTarget() {
+    let targetEndpointsCache = [];
+
+    function endpointHost(config) {
+        const url = config.target_config && (config.target_config.url || config.target_config.base_url);
+        try { return new URL(url).host + new URL(url).pathname.replace(/\/$/, ''); } catch (e) { return config.target_type; }
+    }
+
+    /**
+     * Abre o dialogo de destino e devolve {endpoint_ids, chatwoot_endpoint_id |
+     * chatwoot, route_url} ou null. Os destinos sao os endpoints do redirector.
+     */
+    async function askTarget() {
+        try {
+            targetEndpointsCache = await (await fetch(`${API_BASE}/webhook-configs`)).json();
+        } catch (e) { targetEndpointsCache = []; }
+        const meta = targetEndpointsCache.filter(c => c.source_type === 'meta_cloud_api' && c.is_active);
+        const connects = targetEndpointsCache.filter(c => c.target_type === 'chatwoot_api');
+
+        document.getElementById('tgtEndpoints').innerHTML = meta.map(c => `
+            <label style="display:flex;gap:8px;align-items:baseline;font-weight:normal;cursor:pointer">
+              <input type="checkbox" value="${c.id}" style="width:auto">
+              <span><strong>${escapeHtml(c.name)}</strong> <code>${escapeHtml(c.slug)}</code>
+                <span class="text-muted">&rarr; ${escapeHtml(endpointHost(c))}</span></span>
+            </label>`).join('') || '<div class="text-muted">Nenhum endpoint no formato da Meta ainda.</div>';
+
+        document.getElementById('tgtConnect').innerHTML =
+            '<option value="">N&atilde;o criar</option>' +
+            connects.map(c => `<option value="${c.id}">${escapeHtml(c.name)} &mdash; ${escapeHtml(endpointHost(c))} (conta ${escapeHtml(String(c.target_config.account_id ?? '?'))})</option>`).join('') +
+            '<option value="manual">Outro Connect (preencher)</option>';
+        toggleManualConnect();
+
         document.getElementById('metaTargetDialog').showModal();
         return new Promise(resolve => { targetResolver = resolve; });
+    }
+
+    function toggleManualConnect() {
+        const manual = document.getElementById('tgtConnect').value === 'manual';
+        document.getElementById('tgtManual').classList.toggle('hide', !manual);
     }
 
     function resolveTarget(value) {
@@ -1067,13 +1108,24 @@
 
     document.getElementById('metaTargetForm').addEventListener('submit', (e) => {
         e.preventDefault();
-        const base = document.getElementById('tgtBase').value.trim();
-        const token = document.getElementById('tgtToken').value.trim();
-        const account = parseInt(document.getElementById('tgtAccount').value, 10);
+        const out = {
+            endpoint_ids: [...document.querySelectorAll('#tgtEndpoints input:checked')].map(i => Number(i.value)),
+        };
+        const connect = document.getElementById('tgtConnect').value;
+        if (connect === 'manual') {
+            const base = document.getElementById('tgtBase').value.trim();
+            const token = document.getElementById('tgtToken').value.trim();
+            const account = parseInt(document.getElementById('tgtAccount').value, 10);
+            if (!base || !token || !account) return toast('Preencha URL, token e conta do Connect', 'error');
+            out.chatwoot = { base_url: base, api_token: token, account_id: account };
+        } else if (connect) {
+            out.chatwoot_endpoint_id = Number(connect);
+        }
         const url = document.getElementById('tgtUrl').value.trim();
-        const out = {};
-        if (base && token && account) out.chatwoot = { base_url: base, api_token: token, account_id: account };
         if (url) out.route_url = url;
+        if (!out.endpoint_ids.length && !out.chatwoot && !out.chatwoot_endpoint_id && !out.route_url) {
+            return toast('Escolha pelo menos um destino', 'error');
+        }
         resolveTarget(out);
     });
 
@@ -1156,7 +1208,7 @@
             el.innerHTML = metaChannelsCache.map(c => {
                 const extra = statusById[c.id] || {};
                 const channel = { ...c, ...extra };
-                const routes = (c.routes || []).map(r => `<code>${escapeHtml(r.slug)}</code>`).join(' ') || '<span class="text-muted">sem rota</span>';
+                const routes = (c.routes || []).map(r => `<code>${escapeHtml(r.slug)}</code><button type="button" class="btn btn--sm" style="padding:0 6px;margin-left:2px" title="Tirar do canal" onclick="unlinkRoute(${c.id}, ${r.id})">&times;</button>`).join(' ') || '<span class="text-muted">sem rota</span>';
                 const checked = channel.callback_checked_at ? new Date(channel.callback_checked_at).toLocaleString() : 'nunca';
                 const expires = channel.token_expires_at ? new Date(channel.token_expires_at).toLocaleDateString() : '—';
                 return `
@@ -1250,15 +1302,35 @@
         } catch (err) { toast('Falhou ao conferir', 'error'); console.error(err); }
     }
 
+    async function unlinkRoute(channelId, configId) {
+        if (!confirm('Tirar este endpoint do canal? O endpoint continua existindo.')) return;
+        const r = await fetch(`${API_BASE}/meta/channels/${channelId}/routes/${configId}`, { method: 'DELETE' });
+        r.ok ? toast('Endpoint tirado do canal', 'success') : toast('Falhou', 'error');
+        await renderMetaChannels();
+    }
+
     async function addRoute(channelId, product) {
         const target = await askTarget();
         if (!target) return;
-        if (product === 'instagram' && target.chatwoot) {
+        if (target.endpoint_ids.length) {
+            const r = await fetch(`${API_BASE}/meta/channels/${channelId}/routes`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ endpoint_ids: target.endpoint_ids }),
+            });
+            const data = await r.json().catch(() => ({}));
+            r.ok ? toast(`${target.endpoint_ids.length} endpoint(s) ligado(s)`, 'success') : toast('Falhou: ' + (data.error || r.statusText), 'error');
+        }
+        const connectBase = target.chatwoot ? target.chatwoot.base_url
+            : target.chatwoot_endpoint_id ? (targetEndpointsCache.find(c => c.id === target.chatwoot_endpoint_id) || {}).target_config?.base_url
+            : null;
+        if (product === 'instagram' && connectBase) {
             const r = await fetch(`${API_BASE}/meta/channels/${channelId}/route-instagram`, {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ base_url: target.chatwoot.base_url }),
+                body: JSON.stringify({ base_url: connectBase }),
             });
-            r.ok ? toast('Rota criada', 'success') : toast('Falhou ao criar a rota', 'error');
+            r.ok ? toast('Rota para o Connect criada', 'success') : toast('Falhou ao criar a rota', 'error');
+        } else if (connectBase) {
+            toast('Caixa no Connect só é criada ao conectar o número. Use "Conectar WhatsApp" de novo.', 'error');
         }
         if (target.route_url) {
             const channel = metaChannelsCache.find(c => c.id === channelId);

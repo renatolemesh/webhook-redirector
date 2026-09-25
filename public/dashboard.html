@@ -1233,9 +1233,9 @@
     }
 
     async function deleteApp(id) {
-        if (!confirm('Excluir o app? Os canais dele saem junto; os endpoints ficam, sem v&iacute;nculo.')) return;
+        if (!confirm('Excluir o app? Os canais dele saem junto; os endpoints ficam, sem vínculo.')) return;
         const response = await fetch(`${API_BASE}/meta/apps/${id}`, { method: 'DELETE' });
-        response.ok ? toast('App exclu&iacute;do', 'success') : toast('Falhou', 'error');
+        response.ok ? toast('App excluído', 'success') : toast('Falhou', 'error');
         await renderMeta();
     }
 
@@ -1286,7 +1286,7 @@
                 s.src = 'https://connect.facebook.net/en_US/sdk.js';
                 s.async = true;
                 s.onload = resolve;
-                s.onerror = () => reject(new Error('O SDK do Facebook n&atilde;o carregou'));
+                s.onerror = () => reject(new Error('O SDK do Facebook não carregou: bloqueador de anúncios ou proteção contra rastreamento do navegador costuma barrar connect.facebook.net'));
                 document.head.appendChild(s);
             });
         }
@@ -1308,21 +1308,21 @@
             cfg = await (await fetch(`${API_BASE}/meta/apps/${appId}/signup-config`)).json();
         } catch (err) { return toast('Falhou ao ler a config do app', 'error'); }
         if (!cfg.config_id) return toast('Cadastre o Configuration ID do Embedded Signup neste app', 'error');
-        if (!cfg.public_base_url_set) return toast('PUBLIC_BASE_URL n&atilde;o est&aacute; configurado no servidor', 'error');
+        if (!cfg.public_base_url_set) return toast('PUBLIC_BASE_URL não está configurado no servidor', 'error');
 
         metaSignupInfo = null;
         try { await loadFbSdk(cfg.app_id, cfg.graph_api_version); } catch (err) { return toast(err.message, 'error'); }
 
         window.FB.login(async (response) => {
             const code = response && response.authResponse && response.authResponse.code;
-            if (!code) return toast('Autoriza&ccedil;&atilde;o cancelada', 'error');
+            if (!code) return toast('Autorização cancelada', 'error');
 
             let waba = metaSignupInfo && metaSignupInfo.waba_id;
             let phone = metaSignupInfo && metaSignupInfo.phone_number_id;
             if (!waba || !phone) {
-                waba = (prompt('O SDK n&atilde;o informou o WABA. Cole o WABA ID:', '') || '').trim();
+                waba = (prompt('O SDK não informou o WABA. Cole o WABA ID:', '') || '').trim();
                 phone = (prompt('Cole o phone number ID:', '') || '').trim();
-                if (!waba || !phone) return toast('Sem WABA e n&uacute;mero n&atilde;o d&aacute; para concluir', 'error');
+                if (!waba || !phone) return toast('Sem WABA e número não dá para concluir', 'error');
             }
 
             const target = await askTarget();
@@ -1347,7 +1347,7 @@
             const r = await fetch(`${API_BASE}/meta/apps/${appId}/instagram/start`);
             const data = await r.json();
             if (!r.ok) return toast(data.error || 'Falhou', 'error');
-            toast('Abrindo a autoriza&ccedil;&atilde;o do Instagram…', 'success');
+            toast('Abrindo a autorização do Instagram…', 'success');
             window.open(data.authorize_url, '_blank', 'noopener');
         } catch (err) { toast('Falhou ao iniciar', 'error'); console.error(err); }
     }
